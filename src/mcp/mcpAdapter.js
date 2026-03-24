@@ -126,6 +126,7 @@ async function getClicktagInfo({ clicktags }) {
 async function getWeatherInfo({ city }) {
   const normalizedCity = String(city || "").trim();
   const cityQuery = CITY_ALIAS[normalizedCity] || normalizedCity;
+  // 查询地理位置
   const geoUrl =
     "https://geocoding-api.open-meteo.com/v1/search?" +
     new URLSearchParams({
@@ -136,6 +137,7 @@ async function getWeatherInfo({ city }) {
     }).toString();
   const geoData = await fetchJson(geoUrl);
   const locations = Array.isArray(geoData?.results) ? geoData.results : [];
+  // 肯能返回的有重名的城市，需要根据人口数和特征码筛选
   const location = pickBestLocation(cityQuery, locations);
   if (!location) {
     throw new Error(`未找到城市: ${normalizedCity}`);
