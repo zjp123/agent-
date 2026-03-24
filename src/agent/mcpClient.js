@@ -20,12 +20,13 @@ class McpClient {
     });
 
     await this.mcp.connect(transport);
+    // listTools 获取mcp服务端注册的工具 ---StdioClientTransport
     const toolsResult = await this.mcp.listTools();
     console.log("MCP 服务端注册的工具:", toolsResult.tools || []);
     this.tools = toolsResult.tools || [];
   }
 
-  // 调用mcp服务端的工具
+  // 调用mcp服务端的工具---callTool 来源于StdioServerTransport
   async callTool(name, args) {
     return this.mcp.callTool({
       name,
