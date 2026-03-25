@@ -176,4 +176,123 @@ async function getWeatherInfo({ city }) {
   };
 }
 
-module.exports = { getClicktagInfo, getWeatherInfo };
+function normalizeAShareSymbol(input) {
+  const raw = String(input || "").trim().toLowerCase();
+  const normalized = raw.replace(/\s+/g, "").replace(/^([a-z]{2})\./, "$1");
+  const prefixedMatch = normalized.match(/^(sh|sz|bj)(\d{6})$/);
+  if (prefixedMatch) {
+    const prefix = prefixedMatch[1];
+    const symbol = prefixedMatch[2];
+    if (prefix === "sh") {
+      return { exchange: "SH", symbol, secid: `1.${symbol}` };
+    }
+    if (prefix === "sz") {
+      return { exchange: "SZ", symbol, secid: `0.${symbol}` };
+    }
+    return { exchange: "BJ", symbol, secid: `0.${symbol}` };
+  }
+
+  const plainMatch = normalized.match(/^(\d{6})$/);
+  if (!plainMatch) {
+    throw new Error("股票代码格式不合法，请输入 6 位 A 股代码");
+  }
+  const symbol = plainMatch[1];
+  if (/^6/.test(symbol)) {
+    return { exchange: "SH", symbol, secid: `1.${symbol}` };
+  }
+  if (/^(0|3)/.test(symbol)) {
+    return { exchange: "SZ", symbol, secid: `0.${symbol}` };
+  }
+  if (/^(4|8)/.test(symbol)) {
+    return { exchange: "BJ", symbol, secid: `0.${symbol}` };
+  }
+  throw new Error("暂不支持该市场代码，请输入沪深北 A 股代码");
+}
+
+function toYyyyMmDd(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}${month}${day}`;
+}
+
+function toNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+async function getAStockHistory({ symbol }) {
+  const normalized = normalizeAShareSymbol(symbol);
+  const endDate = new Date();
+  const startDate = new Date(endDate);
+  startDate.setFullYear(endDate.getFullYear() - 1);
+
+  const url =
+    "https://push2his.eastmoney.com/api/qt/stock/kline/get?" +
+    new URLSearchParams({
+      secid: normalized.secid,
+      fields1: "f1,f2,f3,f4,f5,f6",
+      fields2: "f51,f52,f53,f54,f55,f56,f57,f58",
+      klt: "101",
+      fqt: "1",
+      beg: toYyyyMmDd(startDate),
+      end: toYyyyMmDd(endDate),
+      lmt: "400",
+    }).toString();
+
+  const payload = await fetchJson(url, 10000);
+  const klineRows = Array.isArray(payload?.data?.klines) ? payload.data.klines : [];
+  if (!klineRows.length) {
+    throw new Error("未获取到股票历史数据");
+  }
+
+  const points = klineRows
+    .map((row) => String(row || "").split(","))
+    .filter((items) => items.length >= 7)
+    .map((items) => ({
+      date: items[0],
+      open: toNum(items[1]),
+      close: toNum(items[2]),
+      high: toNum(items[3]),
+      low: toNum(items[4]),
+      volume: toNum(items[5]),
+      turnover: toNum(items[6]),
+    }));
+
+  if (!points.length) {
+    throw new Error("股票历史数据为空");
+  }
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const highest = points.reduce((acc, item) => Math.max(acc, item.high), points[0].high);
+  const lowest = points.reduce((acc, item) => Math.min(acc, item.low), points[0].low);
+  const change = Number((last.close - first.close).toFixed(2));
+  const changePercent = first.close
+    ? Number((((last.close - first.close) / first.close) * 100).toFixed(2))
+    : 0;
+
+  return {
+    exchange: normalized.exchange,
+    symbol: normalized.symbol,
+    secid: normalized.secid,
+    from: first.date,
+    to: last.date,
+    summary: {
+      startClose: first.close,
+      endClose: last.close,
+      change,
+      changePercent,
+      highest,
+      lowest,
+      pointCount: points.length,
+    },
+    points,
+    chart: {
+      labels: points.map((item) => item.date),
+      closeSeries: points.map((item) => item.close),
+    },
+  };
+}
+
+module.exports = { getClicktagInfo, getWeatherInfo, getAStockHistory };

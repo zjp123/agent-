@@ -30,6 +30,25 @@ function extractCity(question) {
   return "北京";
 }
 
+function isAStockQuestion(question) {
+  return /(a股|股票|股价|k线|走势|上证|深证|沪深|sh\d{6}|sz\d{6}|\b[0368]\d{5}\b)/i.test(
+    question
+  );
+}
+
+function extractAStockSymbol(question) {
+  const normalized = String(question || "").toLowerCase().replace(/\s+/g, "");
+  const prefixed = normalized.match(/(sh|sz|bj)\d{6}/);
+  if (prefixed?.[0]) {
+    return prefixed[0];
+  }
+  const plain = normalized.match(/\b[0368]\d{5}\b/);
+  if (plain?.[0]) {
+    return plain[0];
+  }
+  return "600519";
+}
+
 async function writeStreamByChunks(stream, text) {
   // 模拟模型“逐字输出”的体验
   const chunkSize = 20;
@@ -56,6 +75,31 @@ async function runLocalMode({ question, mcpClient, stream }) {
       `风速：${weather.windSpeed ?? "--"}${weather?.unit?.windSpeed || "m/s"}`,
     ].join("\n");
     await writeStreamByChunks(stream, weatherText);
+    return;
+  }
+
+  if (isAStockQuestion(question)) {
+    const symbol = extractAStockSymbol(question);
+    const toolResult = await mcpClient.callTool("get_a_share_history", { symbol });
+    const textBlock = toolResult?.content?.[0]?.text || "{}";
+    const parsed = safeJsonParse(textBlock) || {};
+    const stock = parsed?.data || {};
+    const summary = stock?.summary || {};
+    const stockText = [
+      `我已经调用 MCP 工具查询 A 股历史行情：`,
+      `代码：${stock.symbol || symbol}`,
+      `交易所：${stock.exchange || "--"}`,
+      `区间：${stock.from || "--"} 到 ${stock.to || "--"}`,
+      `起始收盘：${summary.startClose ?? "--"}`,
+      `结束收盘：${summary.endClose ?? "--"}`,
+      `涨跌额：${summary.change ?? "--"}`,
+      `涨跌幅：${summary.changePercent ?? "--"}%`,
+      `最高价：${summary.highest ?? "--"}`,
+      `最低价：${summary.lowest ?? "--"}`,
+      `数据点：${summary.pointCount ?? "--"} 个交易日`,
+      `已返回可绘制折线图的数据序列（labels + closeSeries）。`,
+    ].join("\n");
+    await writeStreamByChunks(stream, stockText);
     return;
   }
 
@@ -132,7 +176,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
         role: "system",
         // content: 'You are a helpful assistant.
         content:
-          "你是数据与天气助手。查询 clicktag 数据时请调用 get_clicktag_info；查询天气时请调用 get_weather_info；拿到工具结果后再回答。",
+          "你是数据、天气与股票助手。查询 clicktag 数据时请调用 get_clicktag_info；查询天气时请调用 get_weather_info；查询 A 股近一年历史价格时请调用 get_a_share_history；拿到工具结果后再回答。",
       },
       { role: "user", content: question },
     ],

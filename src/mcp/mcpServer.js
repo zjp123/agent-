@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { getClicktagInfo, getWeatherInfo } = require("./mcpAdapter");
+const { getClicktagInfo, getWeatherInfo, getAStockHistory } = require("./mcpAdapter");
 
 const clicktagsInputSchema = z.object({
   clicktags: z
@@ -17,6 +17,14 @@ const weatherInputSchema = z.object({
     .min(1, "city 不能为空")
     .max(40, "city 长度不能超过 40")
     .regex(/^[\u4e00-\u9fa5a-zA-Z\s·-]+$/, "city 格式不合法"),
+});
+const aShareInputSchema = z.object({
+  symbol: z
+    .string()
+    .trim()
+    .min(1, "symbol 不能为空")
+    .max(12, "symbol 长度不能超过 12")
+    .regex(/^(?:(?:sh|sz|bj)\d{6}|\d{6})$/i, "symbol 格式不合法，例如 600519 或 sh600519"),
 });
 
 const mcpServer = new McpServer({
@@ -74,6 +82,36 @@ mcpServer.tool(
       throw new Error(parsedInput.error.issues[0]?.message || "city 参数不合法");
     }
     const result = await getWeatherInfo({ city: parsedInput.data.city });
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "查询成功",
+              data: result,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+mcpServer.tool(
+  "get_a_share_history",
+  "按 A 股股票代码查询近一年日线价格数据",
+  {
+    symbol: aShareInputSchema.shape.symbol.describe("A 股代码，例如 600519、000001、sh600519"),
+  },
+  async ({ symbol }) => {
+    const parsedInput = aShareInputSchema.safeParse({ symbol });
+    if (!parsedInput.success) {
+      throw new Error(parsedInput.error.issues[0]?.message || "symbol 参数不合法");
+    }
+    const result = await getAStockHistory({ symbol: parsedInput.data.symbol });
     return {
       content: [
         {
