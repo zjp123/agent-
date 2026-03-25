@@ -181,6 +181,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
 
     response = await client.responses.create({
       model: modelConfig.model,
+      // 这次请求是对上一次响应的延续 ，不是一条全新的独立请求。 防止上下文断开
       previous_response_id: response.id,
       input: toolOutputs,
       tools,

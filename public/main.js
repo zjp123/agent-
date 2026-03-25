@@ -1,5 +1,18 @@
-// 非原生fetch
+// 非原生fetch 流式返回 + 可中断 + post
+// 原生EventSource 只支持get
 import { fetchEventSource } from "https://esm.sh/@microsoft/fetch-event-source@2.0.1";
+
+/*
+const es = new EventSource("/api/aiAgent/stream?question=北京天气");
+
+es.addEventListener("message", (event) => {
+  console.log("默认事件:", event.data);
+});
+
+es.addEventListener("progress", (event) => {
+  console.log("自定义 progress 事件:", event.data);
+});
+*/
 // 前端单次---http--后端一次性返回
 //“前端发一个问题，后端持续吐 token”场景，优先 SSE/ fetchEventSource ； 
 // 响应类型 content-type text/event-stream; charset=utf-8
