@@ -24,6 +24,7 @@ const mcpClient = new McpClient();
 app.post("/api/aiAgent/ask", async (req, res) => {
   const modelEnabled = process.env.ENABLE_OPENAI === "true" && Boolean(process.env.LLM_API_KEY);
   res.setHeader("X-Agent-Mode", modelEnabled ? "openai" : "local");
+  res.setHeader("X-Agent-Thinking-Mode", String(process.env.AGENT_THINKING_MODE || "planning"));
 
   // SSE 响应头：保持连接不断开，按块推送数据
   res.setHeader("Connection", "keep-alive");
@@ -53,6 +54,7 @@ app.post("/api/aiAgent/ask", async (req, res) => {
         apiKey: process.env.LLM_API_KEY || "",
         baseURL: process.env.LLM_BASE_URL || "",
         model: process.env.LLM_MODEL || "gpt-4o-mini",
+        thinkingMode: process.env.AGENT_THINKING_MODE || "planning",
       },
     });
   } catch (error) {
