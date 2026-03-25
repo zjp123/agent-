@@ -136,7 +136,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
       },
       { role: "user", content: question },
     ],
-    tools,
+    tools,// 告诉agent 工具菜单
     // tool_choice: "required",
   });
 
