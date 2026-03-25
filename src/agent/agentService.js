@@ -140,6 +140,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
     // tool_choice: "required",
   });
 
+  // maxSteps = min(10, 2 + 预期链路深度 + 重试预算)
   for (let step = 0; step < 6; step += 1) {
     const outputItems = Array.isArray(response?.output) ? response.output : [];
     const functionCalls = outputItems.filter((item) => item?.type === "function_call");
