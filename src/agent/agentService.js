@@ -1,5 +1,8 @@
 const OpenAI = require("openai");
 
+const DEFAULT_THINKING_MODE = "react";
+const SUPPORTED_THINKING_MODES = new Set(["react", "local"]);
+
 function safeJsonParse(content) {
   try {
     return JSON.parse(content);
@@ -47,6 +50,59 @@ function extractAStockSymbol(question) {
     return plain[0];
   }
   return "600519";
+}
+
+function normalizeThinkingMode(thinkingMode) {
+  const mode = String(thinkingMode || DEFAULT_THINKING_MODE).toLowerCase().trim();
+  if (SUPPORTED_THINKING_MODES.has(mode)) {
+    return mode;
+  }
+  return DEFAULT_THINKING_MODE;
+}
+
+function readOutputText(response) {
+  if (typeof response?.output_text === "string" && response.output_text.trim()) {
+    return response.output_text;
+  }
+  const blocks = [];
+  const outputItems = Array.isArray(response?.output) ? response.output : [];
+  for (const item of outputItems) {
+    if (item?.type !== "message") {
+      continue;
+    }
+    const contentList = Array.isArray(item?.content) ? item.content : [];
+    for (const contentItem of contentList) {
+      if (typeof contentItem?.text === "string") {
+        blocks.push(contentItem.text);
+      }
+    }
+  }
+  return blocks.join("\n").trim();
+}
+
+function mapMcpToolsToOpenAiTools(mcpClient) {
+  const mcpTools = Array.isArray(mcpClient?.tools) ? mcpClient.tools : [];
+  return mcpTools.map((tool) => ({
+    type: "function",
+    name: tool.name,
+    description: tool.description || "",
+    parameters: tool.inputSchema || {
+      type: "object",
+      properties: {},
+    },
+  }));
+}
+
+function createReActSystemPrompt(toolNames) {
+  const menu = toolNames.length ? toolNames.join("、") : "无";
+  return [
+    "你是一个 ReAct Agent。",
+    "你需要在每一步先判断是否需要行动，再决定是否调用工具。",
+    "可用工具只有以下这些：",
+    menu,
+    "当信息不足时，优先调用工具；当信息足够时，直接给出最终回答。",
+    "禁止编造不存在的工具；如果用户目标超出可用工具能力，请明确说明能力边界并给出下一步建议。",
+  ].join("");
 }
 
 async function writeStreamByChunks(stream, text) {
@@ -127,46 +183,18 @@ async function runLocalMode({ question, mcpClient, stream }) {
   await writeStreamByChunks(stream, `${header}${body}${tail}`);
 }
 
-async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
+async function runReActMode({ question, mcpClient, stream, modelConfig }) {
   const client = new OpenAI({
     apiKey: modelConfig.apiKey,
     baseURL: modelConfig.baseURL || undefined,
   });
 
-  const mcpTools = Array.isArray(mcpClient?.tools) ? mcpClient.tools : [];
-  if (!mcpTools.length) {
+  const tools = mapMcpToolsToOpenAiTools(mcpClient);
+  if (!tools.length) {
     throw new Error("MCP 未返回可用工具，已中止本次 OpenAI 工具调用");
   }
-  const tools = mcpTools.map((tool) => ({
-    type: "function",
-    name: tool.name,
-    description: tool.description || "",
-    parameters: tool.inputSchema || {
-      type: "object",
-      properties: {},
-    },
-  }));
   const allowedToolNames = new Set(tools.map((tool) => tool.name));
-
-  const readOutputText = (response) => {
-    if (typeof response?.output_text === "string" && response.output_text.trim()) {
-      return response.output_text;
-    }
-    const blocks = [];
-    const outputItems = Array.isArray(response?.output) ? response.output : [];
-    for (const item of outputItems) {
-      if (item?.type !== "message") {
-        continue;
-      }
-      const contentList = Array.isArray(item?.content) ? item.content : [];
-      for (const contentItem of contentList) {
-        if (typeof contentItem?.text === "string") {
-          blocks.push(contentItem.text);
-        }
-      }
-    }
-    return blocks.join("\n").trim();
-  };
+  const systemPrompt = createReActSystemPrompt([...allowedToolNames]);
 
   let response = await client.responses.create({
     model: modelConfig.model,
@@ -174,9 +202,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
     input: [
       {
         role: "system",
-        // content: 'You are a helpful assistant.
-        content:
-          "你是数据、天气与股票助手。查询 clicktag 数据时请调用 get_clicktag_info；查询天气时请调用 get_weather_info；查询 A 股近一年历史价格时请调用 get_a_share_history；拿到工具结果后再回答。",
+        content: systemPrompt,
       },
       { role: "user", content: question },
     ],
@@ -184,7 +210,7 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
     // tool_choice: "required",
   });
 
-  // maxSteps = min(10, 2 + 预期链路深度 + 重试预算)
+    // maxSteps = min(10, 2 + 预期链路深度 + 重试预算)
   for (let step = 0; step < 6; step += 1) {
     const outputItems = Array.isArray(response?.output) ? response.output : [];
     const functionCalls = outputItems.filter((item) => item?.type === "function_call");
@@ -239,10 +265,13 @@ async function runOpenAiMode({ question, mcpClient, stream, modelConfig }) {
 
 async function processQuery({ question, mcpClient, stream, modelConfig }) {
   try {
-    if (modelConfig.enabled && modelConfig.apiKey) {
-      await runOpenAiMode({ question, mcpClient, stream, modelConfig });
-    } else {
+    const thinkingMode = normalizeThinkingMode(modelConfig.thinkingMode);
+    if (!modelConfig.enabled || !modelConfig.apiKey) {
       await runLocalMode({ question, mcpClient, stream });
+    } else if (thinkingMode === "local") {
+      await runLocalMode({ question, mcpClient, stream });
+    } else {
+      await runReActMode({ question, mcpClient, stream, modelConfig });
     }
     stream.write("data: [DONE]\n\n");
     stream.end();

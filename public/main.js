@@ -1,5 +1,6 @@
 // 非原生fetch 流式返回 + 可中断 + post
 // 原生EventSource 只支持get
+// EventSource是一种服务器推送技术，只允许服务器向客户端发送消息，而不允许客户端向服务器发送消息
 import { fetchEventSource } from "https://esm.sh/@microsoft/fetch-event-source@2.0.1";
 
 /*
