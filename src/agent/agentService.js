@@ -101,6 +101,9 @@ function createReActSystemPrompt(toolNames) {
     "可用工具只有以下这些：",
     menu,
     "当信息不足时，优先调用工具；当信息足够时，直接给出最终回答。",
+    "当用户要求“发给飞书/Lark”时，优先理解完整意图与上下文，先完成内容生成，再调用 send_lark_message 发送。",
+    "涉及 send_lark_message 时，不要主动索要 chat_id 或 receiveId，先直接调用工具；仅当工具明确报错缺少接收方时再提示用户。",
+    "如果用户要求“先A再发给飞书”，请先完成 A，再把最终内容通过 send_lark_message 发送。",
     "禁止编造不存在的工具；如果用户目标超出可用工具能力，请明确说明能力边界并给出下一步建议。",
   ].join("");
 }

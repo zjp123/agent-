@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { getClicktagInfo, getWeatherInfo, getAStockHistory } = require("./mcpAdapter");
+const { getClicktagInfo, getWeatherInfo, getAStockHistory, sendLarkMessage } = require("./mcpAdapter");
 
 const clicktagsInputSchema = z.object({
   clicktags: z
@@ -25,6 +25,30 @@ const aShareInputSchema = z.object({
     .min(1, "symbol 不能为空")
     .max(12, "symbol 长度不能超过 12")
     .regex(/^(?:(?:sh|sz|bj)\d{6}|\d{6})$/i, "symbol 格式不合法，例如 600519 或 sh600519"),
+});
+const larkInputShape = {
+  text: z.string().trim().min(1, "text 不能为空").max(4000, "text 长度不能超过 4000"),
+  chatId: z.string().trim().min(1, "chatId 不能为空").max(128, "chatId 长度不能超过 128").optional(),
+  receiveIdType: z
+    .enum(["chat_id", "open_id", "user_id", "email", "union_id"], {
+      errorMap: () => ({
+        message: "receiveIdType 仅支持 chat_id | open_id | user_id | email | union_id",
+      }),
+    })
+    .optional(),
+  receiveId: z.string().trim().min(1, "receiveId 不能为空").max(256, "receiveId 长度不能超过 256").optional(),
+};
+const larkInputSchema = z.object(larkInputShape).superRefine((value, ctx) => {
+  if (value.chatId) {
+    return;
+  }
+  if ((value.receiveIdType && !value.receiveId) || (!value.receiveIdType && value.receiveId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "receiveIdType 和 receiveId 需要同时提供",
+      path: ["receiveId"],
+    });
+  }
 });
 
 const mcpServer = new McpServer({
@@ -119,6 +143,44 @@ mcpServer.tool(
           text: JSON.stringify(
             {
               message: "查询成功",
+              data: result,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+mcpServer.tool(
+  "send_lark_message",
+  "通过飞书/Lark 应用消息 API 发送文本消息",
+  {
+    text: larkInputShape.text.describe("要发送的消息文本"),
+    chatId: larkInputShape.chatId.describe("可选，飞书会话 chat_id"),
+    receiveIdType: larkInputShape.receiveIdType.describe("可选，接收者ID类型: chat_id/open_id/user_id/email/union_id"),
+    receiveId: larkInputShape.receiveId.describe("可选，接收者ID值"),
+  },
+  async ({ text, chatId, receiveIdType, receiveId }) => {
+    const parsedInput = larkInputSchema.safeParse({
+      text,
+      chatId,
+      receiveIdType,
+      receiveId,
+    });
+    if (!parsedInput.success) {
+      throw new Error(parsedInput.error.issues[0]?.message || "Lark 参数不合法");
+    }
+    const result = await sendLarkMessage(parsedInput.data);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "发送成功",
               data: result,
             },
             null,

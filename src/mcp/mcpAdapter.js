@@ -1,3 +1,8 @@
+const fs = require("fs");
+const path = require("path");
+const Lark = require("@larksuiteoapi/node-sdk");
+const LARK_RECEIVER_CACHE_FILE = path.resolve(process.cwd(), ".lark-receiver-cache.json");
+
 function createMetric(base) {
   const pv = 1000 + (base % 3000);
   const uv = 400 + (base % 1200);
@@ -295,4 +300,175 @@ async function getAStockHistory({ symbol }) {
   };
 }
 
-module.exports = { getClicktagInfo, getWeatherInfo, getAStockHistory };
+function normalizeLarkDomain(domainInput) {
+  const normalized = String(domainInput || "lark").trim().toLowerCase();
+  if (normalized === "feishu") {
+    return Lark.Domain.Feishu;
+  }
+  if (normalized === "lark") {
+    return Lark.Domain.Lark;
+  }
+  if (normalized.startsWith("http://") || normalized.startsWith("https://")) {
+    return normalized;
+  }
+  return Lark.Domain.Lark;
+}
+
+function normalizeLarkAppType(appTypeInput) {
+  const normalized = String(appTypeInput || "self_build").trim().toLowerCase();
+  if (normalized === "marketplace") {
+    return Lark.AppType.Marketplace;
+  }
+  return Lark.AppType.SelfBuild;
+}
+
+function createLarkApiClient() {
+  const appId = String(process.env.LARK_APP_ID || "").trim();
+  const appSecret = String(process.env.LARK_APP_SECRET || "").trim();
+  if (!appId || !appSecret) {
+    return null;
+  }
+  return new Lark.Client({
+    appId,
+    appSecret,
+    appType: normalizeLarkAppType(process.env.LARK_APP_TYPE),
+    domain: normalizeLarkDomain(process.env.LARK_DOMAIN),
+  });
+}
+
+async function sendByAppApi({ messageText, chatId }) {
+  const targetChatId = String(chatId || "").trim();
+  if (!targetChatId) {
+    throw new Error("缺少 chat_id，请传入 chatId");
+  }
+  const client = createLarkApiClient();
+  if (!client) {
+    throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+  }
+
+  const response = await client.im.message.create({
+    params: {
+      receive_id_type: "chat_id",
+    },
+    data: {
+      receive_id: targetChatId,
+      msg_type: "text",
+      content: JSON.stringify({ text: messageText }),
+    },
+  });
+
+  if (Number(response?.code || 0) !== 0) {
+    throw new Error(`飞书消息发送失败: ${response?.msg || "unknown error"}`);
+  }
+
+  return {
+    channel: "app_api",
+    chatId: targetChatId,
+    messageLength: messageText.length,
+    platformResponse: response,
+  };
+}
+
+function normalizeReceiveIdType(receiveIdTypeInput) {
+  const type = String(receiveIdTypeInput || "").trim().toLowerCase();
+  const allowed = new Set(["chat_id", "open_id", "user_id", "email", "union_id"]);
+  if (!allowed.has(type)) {
+    throw new Error("receiveIdType 不合法，可选值: chat_id | open_id | user_id | email | union_id");
+  }
+  return type;
+}
+
+function readLarkReceiverCache() {
+  try {
+    if (!fs.existsSync(LARK_RECEIVER_CACHE_FILE)) {
+      return null;
+    }
+    const raw = fs.readFileSync(LARK_RECEIVER_CACHE_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    const receiveIdType = normalizeReceiveIdType(parsed?.receiveIdType);
+    const receiveId = String(parsed?.receiveId || "").trim();
+    if (!receiveId) {
+      return null;
+    }
+    return {
+      receiveIdType,
+      receiveId,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+async function sendByAppApiWithReceiveId({ messageText, receiveIdType, receiveId }) {
+  const targetReceiveId = String(receiveId || "").trim();
+  if (!targetReceiveId) {
+    throw new Error("缺少 receiveId");
+  }
+  const normalizedType = normalizeReceiveIdType(receiveIdType);
+  const client = createLarkApiClient();
+  if (!client) {
+    throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+  }
+
+  const response = await client.im.message.create({
+    params: {
+      receive_id_type: normalizedType,
+    },
+    data: {
+      receive_id: targetReceiveId,
+      msg_type: "text",
+      content: JSON.stringify({ text: messageText }),
+    },
+  });
+
+  if (Number(response?.code || 0) !== 0) {
+    throw new Error(`飞书消息发送失败: ${response?.msg || "unknown error"}`);
+  }
+
+  return {
+    channel: "app_api",
+    receiveIdType: normalizedType,
+    receiveId: targetReceiveId,
+    messageLength: messageText.length,
+    platformResponse: response,
+  };
+}
+
+async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
+  const messageText = String(text || "").trim();
+  if (!messageText) {
+    throw new Error("text 不能为空");
+  }
+
+  if (String(chatId || "").trim()) {
+    return sendByAppApi({
+      messageText,
+      chatId,
+    });
+  }
+
+  if (String(receiveId || "").trim() && String(receiveIdType || "").trim()) {
+    return sendByAppApiWithReceiveId({
+      messageText,
+      receiveIdType,
+      receiveId,
+    });
+  }
+
+  const cachedReceiver = readLarkReceiverCache();
+  if (cachedReceiver) {
+    return sendByAppApiWithReceiveId({
+      messageText,
+      receiveIdType: cachedReceiver.receiveIdType,
+      receiveId: cachedReceiver.receiveId,
+    });
+  }
+
+  return sendByAppApiWithReceiveId({
+    messageText,
+    receiveIdType,
+    receiveId,
+  });
+}
+
+module.exports = { getClicktagInfo, getWeatherInfo, getAStockHistory, sendLarkMessage };

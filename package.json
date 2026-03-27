@@ -11,6 +11,7 @@
     "smoke:llm": "ENV_FILE=.env.example node scripts/smoke-test-llm.js"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
     "@modelcontextprotocol/sdk": "^1.17.5",
     "dotenv": "^16.5.0",
     "express": "^4.21.2",
