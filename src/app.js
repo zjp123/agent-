@@ -26,6 +26,8 @@ const LARK_LONG_CONNECTION_ENABLED = String(process.env.LARK_LONG_CONNECTION_ENA
 let larkApiClient = null;
 const LARK_RECEIVER_CACHE_FILE = path.resolve(process.cwd(), ".lark-receiver-cache.json");
 const AGENT_LOG_DIR = path.resolve(__dirname, "logs");
+const LARK_MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
+const RECENT_LARK_MESSAGE_IDS = new Map();
 
 function getLogDate() {
   return new Date().toISOString().slice(0, 10);
@@ -57,6 +59,25 @@ function writeAgentLog(entry) {
   } catch (error) {
     console.error("写日志失败:", error?.message || error);
   }
+}
+
+function isDuplicateLarkMessage(messageId) {
+  const id = String(messageId || "").trim();
+  if (!id) {
+    return false;
+  }
+  const now = Date.now();
+  for (const [key, ts] of RECENT_LARK_MESSAGE_IDS.entries()) {
+    if (now - ts > LARK_MESSAGE_DEDUP_TTL_MS) {
+      RECENT_LARK_MESSAGE_IDS.delete(key);
+    }
+  }
+  const lastTs = RECENT_LARK_MESSAGE_IDS.get(id);
+  if (typeof lastTs === "number" && now - lastTs <= LARK_MESSAGE_DEDUP_TTL_MS) {
+    return true;
+  }
+  RECENT_LARK_MESSAGE_IDS.set(id, now);
+  return false;
 }
 
 function normalizeLarkDomain(domainInput) {
@@ -175,8 +196,17 @@ async function sendLarkReply({ chatId, text }) {
 }
 
 // 回复lark
-async function processLarkIncomingMessage({ content, chatId, senderType }) {
+async function processLarkIncomingMessage({ content, chatId, senderType, messageId }) {
   if (String(senderType || "").trim().toLowerCase() === "app") {
+    return;
+  }
+  if (isDuplicateLarkMessage(messageId)) {
+    writeAgentLog({
+      channel: "lark",
+      stage: "duplicate",
+      chatId: normalizeLogValue(chatId, 128),
+      messageId: normalizeLogValue(messageId, 128),
+    });
     return;
   }
   const question = extractLarkText(content);
@@ -184,6 +214,7 @@ async function processLarkIncomingMessage({ content, chatId, senderType }) {
     channel: "lark",
     stage: "request",
     chatId: normalizeLogValue(chatId, 128),
+    messageId: normalizeLogValue(messageId, 128),
     question: normalizeLogValue(question),
   });
   upsertLarkReceiverCache({ chatId });
@@ -215,7 +246,7 @@ async function processLarkIncomingMessage({ content, chatId, senderType }) {
     });
     return;
   }
-
+  // 调用大模型回复lark消息
   const answer = await runAgentAndCollectText(question);
   await sendLarkReply({
     chatId,
@@ -271,6 +302,7 @@ function startLarkLongConnection() {
         content: event?.message?.content,
         chatId: event?.message?.chat_id,
         senderType: event?.sender?.sender_type,
+        messageId: event?.message?.message_id,
       });
     },
   });
@@ -278,14 +310,17 @@ function startLarkLongConnection() {
   wsClient.start({ eventDispatcher });
 }
 
+// 调用大模型回复lark消息
 async function runAgentAndCollectText(question) {
   const stream = new PassThrough();
   const chunks = [];
 
   stream.on("data", (chunk) => {
+    // 大模型回复数据，需要累计起来
     chunks.push(chunk.toString());
   });
 
+  // 调用大模型
   await processQuery({
     question,
     mcpClient,
@@ -303,7 +338,7 @@ async function runAgentAndCollectText(question) {
   return readAgentTextFromSse(raw);
 }
 
-// webhook 接口，用于接收飞书/Lark 消息事件
+
 app.post("/api/aiAgent/ask", async (req, res) => {
   res.setHeader("X-Agent-Mode", MODEL_ENABLED ? "openai" : "local");
   res.setHeader("X-Agent-Thinking-Mode", String(process.env.AGENT_THINKING_MODE || "react"));
@@ -376,6 +411,7 @@ app.post("/api/aiAgent/ask", async (req, res) => {
   }
 });
 
+// webhook 接口，用于接收飞书/Lark 消息事件
 app.post("/api/lark/events", async (req, res) => {
   if (req.body?.challenge) {
     res.json({ challenge: req.body.challenge });
@@ -399,6 +435,7 @@ app.post("/api/lark/events", async (req, res) => {
       content: req.body?.event?.message?.content,
       chatId: req.body?.event?.message?.chat_id,
       senderType: req.body?.event?.sender?.sender_type,
+      messageId: req.body?.event?.message?.message_id,
     });
     res.json({ code: 0, msg: "ok" });
   } catch (error) {
