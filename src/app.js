@@ -170,6 +170,101 @@ function upsertLarkReceiverCache({ chatId }) {
   fs.writeFileSync(LARK_RECEIVER_CACHE_FILE, JSON.stringify(payload));
 }
 
+function readLarkReceiverCache() {
+  try {
+    if (!fs.existsSync(LARK_RECEIVER_CACHE_FILE)) {
+      return null;
+    }
+    const raw = fs.readFileSync(LARK_RECEIVER_CACHE_FILE, "utf-8");
+    const parsed = JSON.parse(raw);
+    const receiveIdType = String(parsed?.receiveIdType || "").trim();
+    const receiveId = String(parsed?.receiveId || "").trim();
+    if (receiveIdType !== "chat_id" || !receiveId) {
+      return null;
+    }
+    return {
+      receiveIdType,
+      receiveId,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+// 拉取群消息列表
+async function listLarkChats(larkClient) {
+  const chatIds = [];
+  let pageToken = "";
+  for (let i = 0; i < 20; i += 1) {
+    const response = await larkClient.im.chat.list({
+      params: {
+        page_size: 50,
+        page_token: pageToken || undefined,
+      },
+    });
+    if (Number(response?.code || 0) !== 0) {
+      throw new Error(`拉取群列表失败: ${response?.msg || "unknown error"}`);
+    }
+    const items = Array.isArray(response?.data?.items) ? response.data.items : [];
+    for (const item of items) {
+      const chatId = String(item?.chat_id || "").trim();
+      if (chatId) {
+        chatIds.push(chatId);
+      }
+    }
+    const hasMore = Boolean(response?.data?.has_more);
+    const nextPageToken = String(response?.data?.page_token || "").trim();
+    if (!hasMore || !nextPageToken) {
+      break;
+    }
+    pageToken = nextPageToken;
+  }
+  return [...new Set(chatIds)];
+}
+// 拉取群列表 记录群id
+async function syncLarkReceiverCacheOnStartup() {
+  if (!larkApiClient) {
+    return;
+  }
+  try {
+    const chatIds = await listLarkChats(larkApiClient);
+    if (!chatIds.length) {
+      writeAgentLog({
+        channel: "lark",
+        stage: "startup_sync",
+        result: "empty_chat_list",
+      });
+      return;
+    }
+    const cached = readLarkReceiverCache();
+    const preferredChatId =
+      cached && chatIds.includes(cached.receiveId) ? cached.receiveId : chatIds[0];
+    const payload = {
+      receiveIdType: "chat_id",
+      receiveId: preferredChatId,
+      updatedAt: new Date().toISOString(),
+      source: "startup_sync",
+      chatCount: chatIds.length,
+      chatIds: chatIds.slice(0, 200),
+    };
+    fs.writeFileSync(LARK_RECEIVER_CACHE_FILE, JSON.stringify(payload));
+    writeAgentLog({
+      channel: "lark",
+      stage: "startup_sync",
+      result: "ok",
+      chatCount: chatIds.length,
+      selectedChatId: normalizeLogValue(preferredChatId, 128),
+    });
+  } catch (error) {
+    writeAgentLog({
+      channel: "lark",
+      stage: "startup_sync",
+      result: "error",
+      error: normalizeLogValue(error?.message || error),
+    });
+  }
+}
+
 async function sendLarkReply({ chatId, text }) {
   const content = trimReplyText(text);
   if (!content) {
@@ -456,6 +551,7 @@ app.post("/api/lark/events", async (req, res) => {
 async function bootstrap() {
   await mcpClient.connectToServer();
   larkApiClient = createLarkClient();
+  await syncLarkReceiverCacheOnStartup();
   // 开启长连接
   startLarkLongConnection();
   app.listen(PORT, () => {
