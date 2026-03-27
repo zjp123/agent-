@@ -25,6 +25,39 @@ const MODEL_ENABLED = process.env.ENABLE_OPENAI === "true" && Boolean(process.en
 const LARK_LONG_CONNECTION_ENABLED = String(process.env.LARK_LONG_CONNECTION_ENABLED || "false") === "true";
 let larkApiClient = null;
 const LARK_RECEIVER_CACHE_FILE = path.resolve(process.cwd(), ".lark-receiver-cache.json");
+const AGENT_LOG_DIR = path.resolve(__dirname, "logs");
+
+function getLogDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getLogFilePath() {
+  return path.resolve(AGENT_LOG_DIR, getLogDate());
+}
+
+function normalizeLogValue(value, maxLength = 6000) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+  const normalized = typeof value === "string" ? value : JSON.stringify(value);
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength)}...`;
+}
+
+function writeAgentLog(entry) {
+  try {
+    fs.mkdirSync(AGENT_LOG_DIR, { recursive: true });
+    const line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ...entry,
+    });
+    fs.appendFileSync(getLogFilePath(), `${line}\n`);
+  } catch (error) {
+    console.error("写日志失败:", error?.message || error);
+  }
+}
 
 function normalizeLarkDomain(domainInput) {
   const normalized = String(domainInput || "lark").trim().toLowerCase();
@@ -147,18 +180,38 @@ async function processLarkIncomingMessage({ content, chatId, senderType }) {
     return;
   }
   const question = extractLarkText(content);
+  writeAgentLog({
+    channel: "lark",
+    stage: "request",
+    chatId: normalizeLogValue(chatId, 128),
+    question: normalizeLogValue(question),
+  });
   upsertLarkReceiverCache({ chatId });
   if (!question) {
     await sendLarkReply({
       chatId,
       text: "收到消息，但内容为空，请发送文本消息。",
     });
+    writeAgentLog({
+      channel: "lark",
+      stage: "response",
+      chatId: normalizeLogValue(chatId, 128),
+      answer: "收到消息，但内容为空，请发送文本消息。",
+    });
     return;
   }
   if (isChatIdQuery(question)) {
+    const replyText = `当前会话 chat_id：${chatId}。该会话已注册为网页侧默认飞书接收目标。`;
     await sendLarkReply({
       chatId,
-      text: `当前会话 chat_id：${chatId}。该会话已注册为网页侧默认飞书接收目标。`,
+      text: replyText,
+    });
+    writeAgentLog({
+      channel: "lark",
+      stage: "response",
+      chatId: normalizeLogValue(chatId, 128),
+      question: normalizeLogValue(question),
+      answer: normalizeLogValue(replyText),
     });
     return;
   }
@@ -167,6 +220,13 @@ async function processLarkIncomingMessage({ content, chatId, senderType }) {
   await sendLarkReply({
     chatId,
     text: answer || "我已收到你的消息，但暂时没有可返回的内容。",
+  });
+  writeAgentLog({
+    channel: "lark",
+    stage: "response",
+    chatId: normalizeLogValue(chatId, 128),
+    question: normalizeLogValue(question),
+    answer: normalizeLogValue(answer || "我已收到你的消息，但暂时没有可返回的内容。"),
   });
 }
 
@@ -243,6 +303,7 @@ async function runAgentAndCollectText(question) {
   return readAgentTextFromSse(raw);
 }
 
+// webhook 接口，用于接收飞书/Lark 消息事件
 app.post("/api/aiAgent/ask", async (req, res) => {
   res.setHeader("X-Agent-Mode", MODEL_ENABLED ? "openai" : "local");
   res.setHeader("X-Agent-Thinking-Mode", String(process.env.AGENT_THINKING_MODE || "react"));
@@ -255,14 +316,30 @@ app.post("/api/aiAgent/ask", async (req, res) => {
   // PassThrough 用于把服务层写入的数据直接透传给前端
   const stream = new PassThrough();
   stream.pipe(res);
+  const streamChunks = [];
+  stream.on("data", (chunk) => {
+    streamChunks.push(chunk.toString());
+  });
 
   try {
     const question = String(req.body?.question || "").trim();
+    writeAgentLog({
+      channel: "web",
+      stage: "request",
+      question: normalizeLogValue(question),
+      ip: normalizeLogValue(req.ip, 128),
+    });
     if (!question) {
       // stream.write(`data: ${encodeURIComponent("请提供您的问题")}\n\n`);
       stream.write(`data: ${JSON.stringify({"error": "请提供您的问题"})}\n\n`);
       stream.write("data: [DONE]\n\n");
       stream.end();
+      writeAgentLog({
+        channel: "web",
+        stage: "response",
+        question: "",
+        answer: "请提供您的问题",
+      });
       return;
     }
 
@@ -278,11 +355,24 @@ app.post("/api/aiAgent/ask", async (req, res) => {
         thinkingMode: process.env.AGENT_THINKING_MODE || "react",
       },
     });
+    const answer = readAgentTextFromSse(streamChunks.join(""));
+    writeAgentLog({
+      channel: "web",
+      stage: "response",
+      question: normalizeLogValue(question),
+      answer: normalizeLogValue(answer),
+    });
   } catch (error) {
     // stream.write(`data: ${encodeURIComponent("服务异常，请稍后重试")}\n\n`);
     stream.write(`data: ${JSON.stringify({"error": "服务异常，请稍后重试"})}\n\n`);
     stream.write("data: [DONE]\n\n");
     stream.end();
+    writeAgentLog({
+      channel: "web",
+      stage: "error",
+      question: normalizeLogValue(String(req.body?.question || "").trim()),
+      error: normalizeLogValue(error?.message || error),
+    });
   }
 });
 
@@ -312,6 +402,12 @@ app.post("/api/lark/events", async (req, res) => {
     });
     res.json({ code: 0, msg: "ok" });
   } catch (error) {
+    writeAgentLog({
+      channel: "lark",
+      stage: "error",
+      chatId: normalizeLogValue(req.body?.event?.message?.chat_id, 128),
+      error: normalizeLogValue(error?.message || error),
+    });
     const fallback = "处理消息时出现异常，请稍后重试。";
     try {
       await sendLarkReply({ text: fallback, chatId: req.body?.event?.message?.chat_id });
