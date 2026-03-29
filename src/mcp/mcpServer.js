@@ -1,6 +1,14 @@
 const { z } = require("zod");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
-const { getClicktagInfo, getWeatherInfo, getAStockHistory, sendLarkMessage } = require("./mcpAdapter");
+const {
+  getClicktagInfo,
+  getWeatherInfo,
+  getAStockHistory,
+  sendLarkMessage,
+  runLarkWorkspaceAction,
+  runWorkspaceAction,
+  getWorkspaceCapabilities,
+} = require("./mcpAdapter");
 
 const clicktagsInputSchema = z.object({
   clicktags: z
@@ -49,6 +57,86 @@ const larkInputSchema = z.object(larkInputShape).superRefine((value, ctx) => {
       path: ["receiveId"],
     });
   }
+});
+const larkWorkspaceShape = {
+  action: z.string().trim().min(1, "action 不能为空").max(128, "action 长度不能超过 128"),
+  text: z.string().trim().min(1, "text 不能为空").max(4000, "text 长度不能超过 4000").optional(),
+  summary: z.string().trim().min(1, "summary 不能为空").max(500, "summary 长度不能超过 500").optional(),
+  description: z.string().trim().max(5000, "description 长度不能超过 5000").optional(),
+  visibility: z.string().trim().max(64, "visibility 长度不能超过 64").optional(),
+  preferPrimary: z.boolean().optional(),
+  chatId: z.string().trim().min(1, "chatId 不能为空").max(128, "chatId 长度不能超过 128").optional(),
+  receiveIdType: z
+    .enum(["chat_id", "open_id", "user_id", "email", "union_id"], {
+      errorMap: () => ({
+        message: "receiveIdType 仅支持 chat_id | open_id | user_id | email | union_id",
+      }),
+    })
+    .optional(),
+  receiveId: z.string().trim().min(1, "receiveId 不能为空").max(256, "receiveId 长度不能超过 256").optional(),
+  calendarId: z.string().trim().min(1, "calendarId 不能为空").max(256, "calendarId 长度不能超过 256").optional(),
+  startTime: z
+    .string()
+    .trim()
+    .min(1, "startTime 不能为空")
+    .max(64, "startTime 长度不能超过 64")
+    .optional(),
+  endTime: z
+    .string()
+    .trim()
+    .min(1, "endTime 不能为空")
+    .max(64, "endTime 长度不能超过 64")
+    .optional(),
+  pageSize: z.number().int().min(1, "pageSize 不能小于 1").max(200, "pageSize 不能超过 200").optional(),
+  pageToken: z.string().trim().max(256, "pageToken 长度不能超过 256").optional(),
+};
+const larkWorkspaceSchema = z
+  .object(larkWorkspaceShape)
+  .superRefine((value, ctx) => {
+    if (value.action === "send_message") {
+      if (!value.text) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "send_message 必须提供 text",
+          path: ["text"],
+        });
+      }
+      if (!value.chatId && (Boolean(value.receiveIdType) !== Boolean(value.receiveId))) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "send_message 在不传 chatId 时，receiveIdType 和 receiveId 需要同时提供",
+          path: ["receiveId"],
+        });
+      }
+    }
+    if (value.action === "list_calendar_events" && !value.calendarId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "list_calendar_events 必须提供 calendarId",
+        path: ["calendarId"],
+      });
+    }
+    if (value.action === "create_calendar_event") {
+      if (!value.startTime || !value.endTime) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "create_calendar_event 必须同时提供 startTime 和 endTime",
+          path: ["endTime"],
+        });
+      }
+    }
+    if ((value.startTime && !value.endTime) || (!value.startTime && value.endTime)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "startTime 和 endTime 需要同时提供",
+        path: ["endTime"],
+      });
+    }
+  });
+const workspaceActionSchema = z.object({
+  provider: z.string().trim().min(1, "provider 不能为空").max(64, "provider 长度不能超过 64"),
+  action: z.string().trim().min(1, "action 不能为空").max(128, "action 长度不能超过 128"),
+  input: z.record(z.any()).optional(),
 });
 
 const mcpServer = new McpServer({
@@ -181,6 +269,109 @@ mcpServer.tool(
           text: JSON.stringify(
             {
               message: "发送成功",
+              data: result,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+mcpServer.tool(
+  "lark_workspace_action",
+  "飞书综合能力入口：动作清单由 workspace_capabilities 运行时返回，模型按权限与可用性自主选择 action",
+  {
+    action: larkWorkspaceShape.action.describe("动作名称，建议先调用 workspace_capabilities 再选择"),
+    text: larkWorkspaceShape.text.describe("send_message 时必填，要发送的文本"),
+    summary: larkWorkspaceShape.summary.describe("create_calendar_event 可选，会议主题"),
+    description: larkWorkspaceShape.description.describe("create_calendar_event 可选，会议描述"),
+    visibility: larkWorkspaceShape.visibility.describe("create_calendar_event 可选，可见性，如 public"),
+    preferPrimary: larkWorkspaceShape.preferPrimary.describe("create_calendar_event 可选，是否优先创建到主日历，默认 true"),
+    chatId: larkWorkspaceShape.chatId.describe("send_message 可选，飞书会话 chat_id"),
+    receiveIdType: larkWorkspaceShape.receiveIdType.describe("send_message 可选，接收者ID类型"),
+    receiveId: larkWorkspaceShape.receiveId.describe("send_message 可选，接收者ID值"),
+    calendarId: larkWorkspaceShape.calendarId.describe("会议相关动作可选，日历ID"),
+    startTime: larkWorkspaceShape.startTime.describe("list_calendar_events 可选，起始时间 ISO8601"),
+    endTime: larkWorkspaceShape.endTime.describe("list_calendar_events 可选，结束时间 ISO8601"),
+    pageSize: larkWorkspaceShape.pageSize.describe("分页大小，默认按接口约定"),
+    pageToken: larkWorkspaceShape.pageToken.describe("分页游标"),
+  },
+  async (args) => {
+    const parsedInput = larkWorkspaceSchema.safeParse(args);
+    if (!parsedInput.success) {
+      throw new Error(parsedInput.error.issues[0]?.message || "lark_workspace_action 参数不合法");
+    }
+    const result = await runLarkWorkspaceAction(parsedInput.data);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "执行成功",
+              data: result,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+mcpServer.tool(
+  "workspace_capabilities",
+  "查询当前已接入的业务 Provider 及其动作能力，供模型自主规划后再调用 workspace_action",
+  {},
+  async () => {
+    const result = await getWorkspaceCapabilities();
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "查询成功",
+              data: result,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+);
+
+mcpServer.tool(
+  "workspace_action",
+  "通用业务能力入口。由 provider + action + input 执行，避免将能力绑定在单一平台，实现可扩展 Agent。",
+  {
+    provider: workspaceActionSchema.shape.provider.describe("业务提供方，例如 lark、meituan、ctrip"),
+    action: workspaceActionSchema.shape.action.describe("业务动作名称，例如 summarize_today_meetings"),
+    input: workspaceActionSchema.shape.input.describe("动作参数对象，结构由 provider/action 决定"),
+  },
+  async ({ provider, action, input }) => {
+    const parsedInput = workspaceActionSchema.safeParse({
+      provider,
+      action,
+      input,
+    });
+    if (!parsedInput.success) {
+      throw new Error(parsedInput.error.issues[0]?.message || "workspace_action 参数不合法");
+    }
+    const result = await runWorkspaceAction(parsedInput.data);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              message: "执行成功",
               data: result,
             },
             null,

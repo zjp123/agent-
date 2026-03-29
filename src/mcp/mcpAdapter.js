@@ -3,6 +3,14 @@ const path = require("path");
 const Lark = require("@larksuiteoapi/node-sdk");
 const LARK_RECEIVER_CACHE_FILE = path.resolve(process.cwd(), ".lark-receiver-cache.json");
 
+function getLarkUserTokenCacheFile() {
+  const customPath = String(process.env.LARK_USER_TOKEN_CACHE_FILE || "").trim();
+  if (customPath) {
+    return path.resolve(process.cwd(), customPath);
+  }
+  return path.resolve(process.cwd(), ".lark-user-token-cache.json");
+}
+
 function createMetric(base) {
   const pv = 1000 + (base % 3000);
   const uv = 400 + (base % 1200);
@@ -314,6 +322,21 @@ function normalizeLarkDomain(domainInput) {
   return Lark.Domain.Lark;
 }
 
+function getLarkOpenApiBaseUrl(domainInput) {
+  const normalized = String(domainInput || "lark").trim().toLowerCase();
+  if (normalized === "feishu") {
+    return "https://open.feishu.cn";
+  }
+  if (normalized === "lark") {
+    return "https://open.larksuite.com";
+  }
+  const directUrl = String(domainInput || "").trim();
+  if (!directUrl) {
+    return "https://open.larksuite.com";
+  }
+  return directUrl.replace(/\/+$/, "");
+}
+
 function normalizeLarkAppType(appTypeInput) {
   const normalized = String(appTypeInput || "self_build").trim().toLowerCase();
   if (normalized === "marketplace") {
@@ -334,6 +357,800 @@ function createLarkApiClient() {
     appType: normalizeLarkAppType(process.env.LARK_APP_TYPE),
     domain: normalizeLarkDomain(process.env.LARK_DOMAIN),
   });
+}
+
+function createLarkAuthConfig() {
+  const appId = String(process.env.LARK_APP_ID || "").trim();
+  const appSecret = String(process.env.LARK_APP_SECRET || "").trim();
+  if (!appId || !appSecret) {
+    throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+  }
+  return {
+    appId,
+    appSecret,
+    baseUrl: getLarkOpenApiBaseUrl(process.env.LARK_DOMAIN),
+  };
+}
+
+function createLarkUserAuthConfig() {
+  const rawToken = String(process.env.LARK_USER_ACCESS_TOKEN || "").trim();
+  const userAccessToken = rawToken.replace(/^Bearer\s+/i, "").trim();
+  if (!userAccessToken) {
+    throw new Error("缺少 LARK_USER_ACCESS_TOKEN");
+  }
+  return {
+    baseUrl: getLarkOpenApiBaseUrl(process.env.LARK_DOMAIN),
+    token: userAccessToken,
+  };
+}
+
+function readLarkUserTokenCache() {
+  try {
+    const file = getLarkUserTokenCacheFile();
+    if (!fs.existsSync(file)) {
+      return null;
+    }
+    const raw = fs.readFileSync(file, "utf-8");
+    const parsed = JSON.parse(raw);
+    const userAccessToken = String(parsed?.userAccessToken || "").trim();
+    if (!userAccessToken) {
+      return null;
+    }
+    return {
+      userAccessToken,
+      refreshToken: String(parsed?.refreshToken || "").trim(),
+      tokenType: String(parsed?.tokenType || "").trim(),
+      scope: String(parsed?.scope || "").trim(),
+      userId: String(parsed?.userId || "").trim(),
+      openId: String(parsed?.openId || "").trim(),
+      name: String(parsed?.name || "").trim(),
+      tenantKey: String(parsed?.tenantKey || "").trim(),
+      expiresAt: Number(parsed?.expiresAt || 0),
+      refreshExpiresAt: Number(parsed?.refreshExpiresAt || 0),
+      updatedAt: String(parsed?.updatedAt || "").trim(),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeLarkUserTokenCache(data = {}) {
+  const file = getLarkUserTokenCacheFile();
+  const payload = {
+    userAccessToken: String(data?.userAccessToken || "").trim(),
+    refreshToken: String(data?.refreshToken || "").trim(),
+    tokenType: String(data?.tokenType || "").trim(),
+    scope: String(data?.scope || "").trim(),
+    userId: String(data?.userId || "").trim(),
+    openId: String(data?.openId || "").trim(),
+    name: String(data?.name || "").trim(),
+    tenantKey: String(data?.tenantKey || "").trim(),
+    expiresAt: Number(data?.expiresAt || 0),
+    refreshExpiresAt: Number(data?.refreshExpiresAt || 0),
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(file, JSON.stringify(payload, null, 2));
+  return payload;
+}
+
+function getTokenExpireAt(expiresInSeconds) {
+  const seconds = Number(expiresInSeconds || 0);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 0;
+  }
+  return Date.now() + seconds * 1000;
+}
+
+function isTokenExpired(expiresAt, skewMs = 2 * 60 * 1000) {
+  const ts = Number(expiresAt || 0);
+  if (!Number.isFinite(ts) || ts <= 0) {
+    return false;
+  }
+  return Date.now() + skewMs >= ts;
+}
+
+function normalizeLarkAuthenPayload(data = {}) {
+  return {
+    userAccessToken: String(data?.access_token || "").trim(),
+    refreshToken: String(data?.refresh_token || "").trim(),
+    tokenType: String(data?.token_type || "").trim(),
+    scope: String(data?.scope || "").trim(),
+    userId: String(data?.user_id || "").trim(),
+    openId: String(data?.open_id || "").trim(),
+    name: String(data?.name || "").trim(),
+    tenantKey: String(data?.tenant_key || "").trim(),
+    expiresAt: getTokenExpireAt(data?.expires_in),
+    refreshExpiresAt: getTokenExpireAt(data?.refresh_expires_in),
+  };
+}
+
+async function exchangeLarkUserAccessTokenByCode({ code }) {
+  const authCode = String(code || "").trim();
+  if (!authCode) {
+    throw new Error("缺少 OAuth code");
+  }
+  const client = createLarkApiClient();
+  if (!client) {
+    throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+  }
+  const response = await client.authen.v1.accessToken.create({
+    data: {
+      grant_type: "authorization_code",
+      code: authCode,
+    },
+  });
+  if (Number(response?.code || 0) !== 0) {
+    throw new Error(`获取 user_access_token 失败: ${response?.msg || "unknown error"}`);
+  }
+  const normalized = normalizeLarkAuthenPayload(response?.data || {});
+  if (!normalized.userAccessToken) {
+    throw new Error("返回的 user_access_token 为空");
+  }
+  const cached = writeLarkUserTokenCache(normalized);
+  return {
+    connected: true,
+    source: "oauth_code",
+    userId: cached.userId,
+    openId: cached.openId,
+    name: cached.name,
+    tenantKey: cached.tenantKey,
+    scope: cached.scope,
+    expiresAt: cached.expiresAt,
+    refreshExpiresAt: cached.refreshExpiresAt,
+    updatedAt: cached.updatedAt,
+  };
+}
+
+async function refreshLarkUserAccessToken(refreshToken) {
+  const normalizedRefreshToken = String(refreshToken || "").trim();
+  if (!normalizedRefreshToken) {
+    throw new Error("缺少 refresh_token");
+  }
+  const client = createLarkApiClient();
+  if (!client) {
+    throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+  }
+  const response = await client.authen.v1.refreshAccessToken.create({
+    data: {
+      grant_type: "refresh_token",
+      refresh_token: normalizedRefreshToken,
+    },
+  });
+  if (Number(response?.code || 0) !== 0) {
+    throw new Error(`刷新 user_access_token 失败: ${response?.msg || "unknown error"}`);
+  }
+  const normalized = normalizeLarkAuthenPayload(response?.data || {});
+  if (!normalized.userAccessToken) {
+    throw new Error("刷新后 user_access_token 为空");
+  }
+  return normalized;
+}
+
+async function getLarkUserAuthConfig() {
+  try {
+    const envConfig = createLarkUserAuthConfig();
+    return {
+      baseUrl: envConfig.baseUrl,
+      token: envConfig.token,
+      source: "env",
+    };
+  } catch (_) {}
+  const baseUrl = getLarkOpenApiBaseUrl(process.env.LARK_DOMAIN);
+  const cached = readLarkUserTokenCache();
+  if (!cached?.userAccessToken) {
+    throw new Error("缺少 LARK_USER_ACCESS_TOKEN，且本地 OAuth token 缓存不存在");
+  }
+  if (!isTokenExpired(cached.expiresAt)) {
+    return {
+      baseUrl,
+      token: cached.userAccessToken,
+      source: "cache",
+    };
+  }
+  if (!cached.refreshToken) {
+    throw new Error("user_access_token 已过期，且缺少 refresh_token");
+  }
+  const refreshed = await refreshLarkUserAccessToken(cached.refreshToken);
+  const merged = writeLarkUserTokenCache({
+    ...cached,
+    ...refreshed,
+    refreshToken: refreshed.refreshToken || cached.refreshToken,
+    scope: refreshed.scope || cached.scope,
+    userId: refreshed.userId || cached.userId,
+    openId: refreshed.openId || cached.openId,
+    name: refreshed.name || cached.name,
+    tenantKey: refreshed.tenantKey || cached.tenantKey,
+  });
+  return {
+    baseUrl,
+    token: merged.userAccessToken,
+    source: "refresh",
+  };
+}
+
+function getLarkAuthHost() {
+  const custom = String(process.env.LARK_OAUTH_AUTHORIZE_BASE || "").trim();
+  if (custom) {
+    return custom.replace(/\/+$/, "");
+  }
+  const domain = String(process.env.LARK_DOMAIN || "lark").trim().toLowerCase();
+  if (domain === "feishu") {
+    return "https://accounts.feishu.cn";
+  }
+  return "https://accounts.larksuite.com";
+}
+
+function getLarkOauthRedirectUri() {
+  const configured = String(process.env.LARK_OAUTH_REDIRECT_URI || "").trim();
+  if (configured) {
+    return configured;
+  }
+  const port = String(process.env.PORT || "8001").trim();
+  return `http://localhost:${port}/api/lark/oauth/callback`;
+}
+
+function getLarkOauthScopes() {
+  const configured = String(process.env.LARK_OAUTH_SCOPES || "").trim();
+  const defaults = ["calendar:calendar:readonly", "calendar:calendar", "offline_access"];
+  const source = configured || defaults.join(" ");
+  const scopes = source
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(scopes)];
+}
+
+function getLarkOAuthAuthorizeUrl({ state } = {}) {
+  const { appId } = createLarkAuthConfig();
+  const query = new URLSearchParams({
+    app_id: appId,
+    redirect_uri: getLarkOauthRedirectUri(),
+    response_type: "code",
+    scope: getLarkOauthScopes().join(" "),
+  });
+  const normalizedState = String(state || "").trim();
+  if (normalizedState) {
+    query.set("state", normalizedState);
+  }
+  return `${getLarkAuthHost()}/open-apis/authen/v1/authorize?${query.toString()}`;
+}
+
+function getLarkOAuthTokenStatus() {
+  const envToken = String(process.env.LARK_USER_ACCESS_TOKEN || "").trim().replace(/^Bearer\s+/i, "");
+  if (envToken) {
+    return {
+      connected: true,
+      source: "env",
+      hasRefreshToken: false,
+      expiresAt: 0,
+      refreshExpiresAt: 0,
+      userId: "",
+      openId: "",
+      name: "",
+      tenantKey: "",
+      scope: "",
+      updatedAt: "",
+    };
+  }
+  const cached = readLarkUserTokenCache();
+  if (!cached?.userAccessToken) {
+    return {
+      connected: false,
+      source: "none",
+      hasRefreshToken: false,
+      expiresAt: 0,
+      refreshExpiresAt: 0,
+      userId: "",
+      openId: "",
+      name: "",
+      tenantKey: "",
+      scope: "",
+      updatedAt: "",
+    };
+  }
+  return {
+    connected: true,
+    source: "cache",
+    hasRefreshToken: Boolean(cached.refreshToken),
+    expiresAt: cached.expiresAt,
+    refreshExpiresAt: cached.refreshExpiresAt,
+    userId: cached.userId,
+    openId: cached.openId,
+    name: cached.name,
+    tenantKey: cached.tenantKey,
+    scope: cached.scope,
+    updatedAt: cached.updatedAt,
+  };
+}
+
+async function fetchLarkJson({ url, method = "GET", body, timeoutMs = 10000, accessToken }) {
+  const { signal, timer } = createTimeoutSignal(timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method,
+      signal,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const json = await response.json();
+    if (!response.ok) {
+      const detail = String(json?.msg || "").trim();
+      throw new Error(`Lark OpenAPI 请求失败: ${response.status}${detail ? ` (${detail})` : ""}`);
+    }
+    if (Number(json?.code || 0) !== 0) {
+      throw new Error(`Lark OpenAPI 调用失败: ${json?.msg || "unknown error"}`);
+    }
+    return json;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Lark OpenAPI 请求超时");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getTenantAccessToken() {
+  const { appId, appSecret, baseUrl } = createLarkAuthConfig();
+  const { signal, timer } = createTimeoutSignal(10000);
+  try {
+    const response = await fetch(`${baseUrl}/open-apis/auth/v3/tenant_access_token/internal`, {
+      method: "POST",
+      signal,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        app_id: appId,
+        app_secret: appSecret,
+      }),
+    });
+    const json = await response.json();
+    if (!response.ok) {
+      throw new Error(`获取 tenant_access_token 失败: ${response.status}`);
+    }
+    if (Number(json?.code || 0) !== 0) {
+      throw new Error(`获取 tenant_access_token 失败: ${json?.msg || "unknown error"}`);
+    }
+    const token = String(json?.tenant_access_token || "").trim();
+    if (!token) {
+      throw new Error("tenant_access_token 为空");
+    }
+    return {
+      baseUrl,
+      token,
+    };
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("获取 tenant_access_token 超时");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeLarkAction(actionInput) {
+  const action = String(actionInput || "").trim().toLowerCase();
+  if (!action) {
+    throw new Error("action 不能为空");
+  }
+  const supportedActions = Object.keys(getLarkActionHandlers());
+  if (!supportedActions.includes(action)) {
+    throw new Error(`action 不支持: ${action}`);
+  }
+  return action;
+}
+
+function toIsoWithDefault(value, fallback) {
+  const source = String(value || "").trim();
+  if (!source) {
+    return fallback.toISOString();
+  }
+  const parsed = new Date(source);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("时间格式不合法，请使用 ISO8601，例如 2026-03-27T00:00:00+08:00");
+  }
+  return parsed.toISOString();
+}
+
+function toLarkTimestampSeconds(value, fallback) {
+  const iso = toIsoWithDefault(value, fallback);
+  const millis = new Date(iso).getTime();
+  return String(Math.floor(millis / 1000));
+}
+
+function getTodayRangeIso() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+  };
+}
+
+function formatLarkTime(value) {
+  if (value && typeof value === "object") {
+    const timestamp = String(value.timestamp || "").trim();
+    const date = String(value.date || "").trim();
+    if (timestamp) {
+      return formatLarkTime(timestamp);
+    }
+    if (date) {
+      return date;
+    }
+    return "";
+  }
+  const source = String(value || "").trim();
+  if (!source) {
+    return "";
+  }
+  if (/^\d+$/.test(source)) {
+    const numeric = Number(source);
+    const millis = source.length >= 13 ? numeric : numeric * 1000;
+    if (Number.isFinite(millis)) {
+      return new Date(millis).toISOString();
+    }
+  }
+  const parsed = new Date(source);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+  return source;
+}
+
+function normalizeLarkCalendarPageSize(pageSizeInput, fallback = 50) {
+  const parsed = Number(pageSizeInput);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+  const floored = Math.floor(parsed);
+  if (floored < 50) {
+    return 50;
+  }
+  if (floored > 200) {
+    return 200;
+  }
+  return floored;
+}
+
+function normalizeMeeting(event) {
+  const startTime = formatLarkTime(event?.start_time);
+  const endTime = formatLarkTime(event?.end_time);
+  const summary = String(event?.summary || "").trim() || "(无主题)";
+  return {
+    eventId: String(event?.event_id || "").trim(),
+    summary,
+    status: String(event?.status || "").trim(),
+    isAllDay: Boolean(event?.is_all_day),
+    startTime,
+    endTime,
+    description: String(event?.description || "").trim(),
+    organizer: {
+      id: String(event?.organizer?.id || "").trim(),
+      idType: String(event?.organizer?.id_type || "").trim(),
+      name: String(event?.organizer?.name || "").trim(),
+    },
+  };
+}
+
+async function listLarkChatsByOpenApi({ pageSize = 50, pageToken = "" } = {}) {
+  const { baseUrl, token } = await getTenantAccessToken();
+  const query = new URLSearchParams({
+    page_size: String(pageSize),
+  });
+  const normalizedToken = String(pageToken || "").trim();
+  if (normalizedToken) {
+    query.set("page_token", normalizedToken);
+  }
+  const payload = await fetchLarkJson({
+    url: `${baseUrl}/open-apis/im/v1/chats?${query.toString()}`,
+    accessToken: token,
+  });
+  const items = Array.isArray(payload?.data?.items) ? payload.data.items : [];
+  return {
+    hasMore: Boolean(payload?.data?.has_more),
+    pageToken: String(payload?.data?.page_token || "").trim(),
+    chats: items.map((item) => ({
+      chatId: String(item?.chat_id || "").trim(),
+      name: String(item?.name || "").trim(),
+      description: String(item?.description || "").trim(),
+      avatar: String(item?.avatar || "").trim(),
+      chatMode: String(item?.chat_mode || "").trim(),
+      chatType: String(item?.chat_type || "").trim(),
+    })),
+  };
+}
+
+async function listLarkCalendars({ pageSize = 50, pageToken = "" } = {}) {
+  const { baseUrl, token } = await getLarkUserAuthConfig();
+  const normalizedPageSize = normalizeLarkCalendarPageSize(pageSize, 50);
+  const query = new URLSearchParams({
+    page_size: String(normalizedPageSize),
+  });
+  const normalizedToken = String(pageToken || "").trim();
+  if (normalizedToken) {
+    query.set("page_token", normalizedToken);
+  }
+  const payload = await fetchLarkJson({
+    url: `${baseUrl}/open-apis/calendar/v4/calendars?${query.toString()}`,
+    accessToken: token,
+  });
+  const items = Array.isArray(payload?.data?.items)
+    ? payload.data.items
+    : Array.isArray(payload?.data?.calendar_list)
+      ? payload.data.calendar_list
+      : [];
+  return {
+    hasMore: Boolean(payload?.data?.has_more),
+    pageToken: String(payload?.data?.page_token || "").trim(),
+    calendars: items.map((item) => ({
+      calendarId: String(item?.calendar_id || "").trim(),
+      summary: String(item?.summary || "").trim(),
+      description: String(item?.description || "").trim(),
+      type: String(item?.type || "").trim(),
+      isPrimary: Boolean(item?.is_primary),
+    })),
+  };
+}
+
+async function getLarkPrimaryCalendar() {
+  const { baseUrl, token } = await getLarkUserAuthConfig();
+  const payload = await fetchLarkJson({
+    url: `${baseUrl}/open-apis/calendar/v4/calendars/primary`,
+    accessToken: token,
+  });
+  const item = payload?.data?.calendar || payload?.data || {};
+  const calendarId = String(item?.calendar_id || "").trim();
+  if (!calendarId) {
+    return null;
+  }
+  return {
+    calendarId,
+    summary: String(item?.summary || "").trim(),
+    description: String(item?.description || "").trim(),
+    type: String(item?.type || "").trim(),
+    isPrimary: Boolean(item?.is_primary || true),
+  };
+}
+
+async function listLarkCalendarEvents({ calendarId, startTime, endTime, pageSize = 100, pageToken = "" }) {
+  const targetCalendarId = String(calendarId || "").trim();
+  if (!targetCalendarId) {
+    throw new Error("缺少 calendarId");
+  }
+  const { baseUrl, token } = await getLarkUserAuthConfig();
+  const { startIso, endIso } = getTodayRangeIso();
+  const normalizedPageSize = normalizeLarkCalendarPageSize(pageSize, 100);
+  const query = new URLSearchParams({
+    start_time: toLarkTimestampSeconds(startTime, new Date(startIso)),
+    end_time: toLarkTimestampSeconds(endTime, new Date(endIso)),
+    page_size: String(normalizedPageSize),
+  });
+  const normalizedToken = String(pageToken || "").trim();
+  if (normalizedToken) {
+    query.set("page_token", normalizedToken);
+  }
+  const payload = await fetchLarkJson({
+    url: `${baseUrl}/open-apis/calendar/v4/calendars/${encodeURIComponent(targetCalendarId)}/events?${query.toString()}`,
+    accessToken: token,
+  });
+  const items = Array.isArray(payload?.data?.items)
+    ? payload.data.items
+    : Array.isArray(payload?.data?.event_list)
+      ? payload.data.event_list
+      : [];
+  return {
+    hasMore: Boolean(payload?.data?.has_more),
+    pageToken: String(payload?.data?.page_token || "").trim(),
+    events: items.map(normalizeMeeting),
+  };
+}
+
+async function listAllLarkCalendars({ pageSize = 50 } = {}) {
+  const calendars = [];
+  let nextToken = "";
+  for (;;) {
+    const page = await listLarkCalendars({
+      pageSize,
+      pageToken: nextToken,
+    });
+    calendars.push(...(Array.isArray(page?.calendars) ? page.calendars : []));
+    if (!page?.hasMore) {
+      break;
+    }
+    nextToken = String(page?.pageToken || "").trim();
+    if (!nextToken) {
+      break;
+    }
+  }
+  return calendars;
+}
+
+async function listAllLarkCalendarEvents({
+  calendarId,
+  startTime,
+  endTime,
+  pageSize = 100,
+} = {}) {
+  const events = [];
+  let nextToken = "";
+  for (;;) {
+    const page = await listLarkCalendarEvents({
+      calendarId,
+      startTime,
+      endTime,
+      pageSize,
+      pageToken: nextToken,
+    });
+    events.push(...(Array.isArray(page?.events) ? page.events : []));
+    if (!page?.hasMore) {
+      break;
+    }
+    nextToken = String(page?.pageToken || "").trim();
+    if (!nextToken) {
+      break;
+    }
+  }
+  return events;
+}
+
+async function summarizeTodayMeetings({ calendarId }) {
+  let targetCalendarId = String(calendarId || "").trim();
+  const allCalendars = await listAllLarkCalendars({ pageSize: 50 });
+  if (!allCalendars.length) {
+    throw new Error("未获取到可用日历，请检查日历权限");
+  }
+  const primaryCalendar = allCalendars.find((item) => item.isPrimary) || allCalendars[0];
+  if (!targetCalendarId) {
+    targetCalendarId = String(primaryCalendar?.calendarId || "").trim();
+  }
+  const calendarsToScan = targetCalendarId
+    ? allCalendars.filter((item) => String(item?.calendarId || "").trim() === targetCalendarId)
+    : allCalendars;
+  const validCalendars = calendarsToScan.length ? calendarsToScan : allCalendars;
+  const calendarNameById = new Map(
+    validCalendars.map((item) => [String(item?.calendarId || "").trim(), String(item?.summary || "").trim()])
+  );
+  const eventPages = await Promise.all(
+    validCalendars.map(async (item) => {
+      const id = String(item?.calendarId || "").trim();
+      const events = await listAllLarkCalendarEvents({ calendarId: id, pageSize: 100 });
+      return events.map((event) => ({
+        ...event,
+        calendarId: id,
+        calendarSummary: calendarNameById.get(id) || "",
+      }));
+    })
+  );
+  const eventMap = new Map();
+  for (const pageEvents of eventPages) {
+    for (const item of pageEvents) {
+      if (item.status === "cancelled") {
+        continue;
+      }
+      const dedupeKey =
+        String(item.eventId || "").trim() ||
+        `${String(item.calendarId || "").trim()}|${String(item.startTime || "").trim()}|${String(item.summary || "").trim()}`;
+      if (!eventMap.has(dedupeKey)) {
+        eventMap.set(dedupeKey, item);
+      }
+    }
+  }
+  const meetings = [...eventMap.values()].sort((a, b) =>
+    String(a.startTime).localeCompare(String(b.startTime))
+  );
+  return {
+    calendarId: targetCalendarId,
+    date: new Date().toISOString().slice(0, 10),
+    count: meetings.length,
+    scannedCalendarCount: validCalendars.length,
+    meetings,
+  };
+}
+
+async function createLarkCalendarEvent({
+  calendarId,
+  summary,
+  startTime,
+  endTime,
+  description,
+  visibility,
+  preferPrimary,
+} = {}) {
+  let targetCalendarId = String(calendarId || "").trim();
+  let targetCalendarMeta = null;
+  if (!targetCalendarId) {
+    const calendars = await listAllLarkCalendars({ pageSize: 50 });
+    if (!calendars.length) {
+      throw new Error("未获取到可用日历，请检查日历权限");
+    }
+    const shouldPreferPrimary = preferPrimary !== false;
+    if (shouldPreferPrimary) {
+      try {
+        const primaryCalendar = await getLarkPrimaryCalendar();
+        if (primaryCalendar?.calendarId) {
+          targetCalendarId = primaryCalendar.calendarId;
+          targetCalendarMeta = primaryCalendar;
+        }
+      } catch (_) {}
+    }
+    if (!targetCalendarId) {
+      const primary = calendars.find((item) => item.isPrimary) || calendars[0];
+      targetCalendarId = String(primary?.calendarId || "").trim();
+      targetCalendarMeta = primary || null;
+    }
+  }
+  if (!targetCalendarId) {
+    throw new Error("缺少 calendarId");
+  }
+  if (!targetCalendarMeta) {
+    const calendars = await listAllLarkCalendars({ pageSize: 50 });
+    targetCalendarMeta =
+      calendars.find((item) => String(item?.calendarId || "").trim() === targetCalendarId) || null;
+  }
+  const title = String(summary || "").trim() || "(无主题)";
+  const now = new Date();
+  const fallbackStart = new Date(now.getTime() + 5 * 60 * 1000);
+  const fallbackEnd = new Date(fallbackStart.getTime() + 30 * 60 * 1000);
+  const startSeconds = Number(toLarkTimestampSeconds(startTime, fallbackStart));
+  const endSeconds = Number(toLarkTimestampSeconds(endTime, fallbackEnd));
+  if (!Number.isFinite(startSeconds) || !Number.isFinite(endSeconds) || endSeconds <= startSeconds) {
+    throw new Error("会议时间不合法，endTime 必须晚于 startTime");
+  }
+  const userAuth = await getLarkUserAuthConfig();
+  const baseUrlToUse = userAuth.baseUrl;
+  const tokenToUse = userAuth.token;
+  const body = {
+    summary: title,
+    start_time: {
+      timestamp: String(startSeconds),
+      timezone: "Asia/Shanghai",
+    },
+    end_time: {
+      timestamp: String(endSeconds),
+      timezone: "Asia/Shanghai",
+    },
+    vchat: {
+      vc_type: "vc",
+      meeting_settings: {
+        join_meeting_permission: "anyone_can_join",
+      },
+    },
+  };
+  const normalizedDescription = String(description || "").trim();
+  if (normalizedDescription) {
+    body.description = normalizedDescription;
+  }
+  const normalizedVisibility = String(visibility || "").trim();
+  if (normalizedVisibility) {
+    body.visibility = normalizedVisibility;
+  }
+  const payload = await fetchLarkJson({
+    url: `${baseUrlToUse}/open-apis/calendar/v4/calendars/${encodeURIComponent(targetCalendarId)}/events`,
+    method: "POST",
+    body,
+    accessToken: tokenToUse,
+  });
+  const rawEvent = payload?.data?.event || payload?.data || {};
+  const normalizedEvent = normalizeMeeting(rawEvent);
+  return {
+    calendarId: targetCalendarId,
+    calendarSummary: String(targetCalendarMeta?.summary || "").trim(),
+    calendarType: String(targetCalendarMeta?.type || "").trim(),
+    event: {
+      ...normalizedEvent,
+      summary: normalizedEvent.summary || title,
+    },
+    raw: payload?.data || {},
+  };
 }
 
 async function sendByAppApi({ messageText, chatId }) {
@@ -455,8 +1272,20 @@ async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
     });
   }
 
+  const oauthTokenCache = readLarkUserTokenCache();
+  const oauthOpenId = String(oauthTokenCache?.openId || "").trim();
+  if (oauthOpenId) {
+    return sendByAppApiWithReceiveId({
+      messageText,
+      receiveIdType: "open_id",
+      receiveId: oauthOpenId,
+    });
+  }
+
+  const allowCachedGroupFallback =
+    String(process.env.LARK_ALLOW_CACHED_GROUP_FALLBACK || "false").trim().toLowerCase() === "true";
   const cachedReceiver = readLarkReceiverCache();
-  if (cachedReceiver) {
+  if (allowCachedGroupFallback && cachedReceiver) {
     return sendByAppApiWithReceiveId({
       messageText,
       receiveIdType: cachedReceiver.receiveIdType,
@@ -464,11 +1293,177 @@ async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
     });
   }
 
-  return sendByAppApiWithReceiveId({
-    messageText,
-    receiveIdType,
-    receiveId,
-  });
+  throw new Error(
+    "未指定消息接收方。请传入 receiveIdType+receiveId 或 chatId；若要默认直发机器人，请先完成 OAuth 以获取用户 open_id"
+  );
 }
 
-module.exports = { getClicktagInfo, getWeatherInfo, getAStockHistory, sendLarkMessage };
+function getLarkActionHandlers() {
+  return {
+    send_message: {
+      execute: async (input = {}) =>
+        sendLarkMessage({
+          text: input?.text,
+          chatId: input?.chatId,
+          receiveIdType: input?.receiveIdType,
+          receiveId: input?.receiveId,
+        }),
+      probe: async () => {
+        const client = createLarkApiClient();
+        if (!client) {
+          throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
+        }
+      },
+    },
+    list_chats: {
+      execute: async (input = {}) =>
+        listLarkChatsByOpenApi({
+          pageSize: input?.pageSize,
+          pageToken: input?.pageToken,
+        }),
+      probe: async () => {
+        await listLarkChatsByOpenApi({ pageSize: 1 });
+      },
+    },
+    list_calendars: {
+      execute: async (input = {}) =>
+        listLarkCalendars({
+          pageSize: input?.pageSize,
+          pageToken: input?.pageToken,
+        }),
+      probe: async () => {
+        await listLarkCalendars({ pageSize: 50 });
+      },
+    },
+    list_calendar_events: {
+      execute: async (input = {}) =>
+        listLarkCalendarEvents({
+          calendarId: input?.calendarId,
+          startTime: input?.startTime,
+          endTime: input?.endTime,
+          pageSize: input?.pageSize,
+          pageToken: input?.pageToken,
+        }),
+      probe: async () => {
+        const calendars = await listLarkCalendars({ pageSize: 50 });
+        const calendarId = String(calendars?.calendars?.[0]?.calendarId || "").trim();
+        if (!calendarId) {
+          throw new Error("未找到可访问日历");
+        }
+        await listLarkCalendarEvents({ calendarId, pageSize: 50 });
+      },
+    },
+    summarize_today_meetings: {
+      execute: async (input = {}) =>
+        summarizeTodayMeetings({
+          calendarId: input?.calendarId,
+        }),
+      probe: async () => {
+        await summarizeTodayMeetings({});
+      },
+    },
+    create_calendar_event: {
+      execute: async (input = {}) =>
+        createLarkCalendarEvent({
+          calendarId: input?.calendarId,
+          summary: input?.summary,
+          startTime: input?.startTime,
+          endTime: input?.endTime,
+          description: input?.description,
+          visibility: input?.visibility,
+          preferPrimary: input?.preferPrimary,
+        }),
+      probe: async () => {
+        const calendars = await listLarkCalendars({ pageSize: 1 });
+        const calendarId = String(calendars?.calendars?.[0]?.calendarId || "").trim();
+        if (!calendarId) {
+          throw new Error("未找到可访问日历");
+        }
+      },
+    },
+  };
+}
+
+async function probeCapability(fn) {
+  try {
+    await fn();
+    return { enabled: true, reason: "" };
+  } catch (error) {
+    return {
+      enabled: false,
+      reason: String(error?.message || error || "unknown error").slice(0, 500),
+    };
+  }
+}
+
+async function detectLarkActionAvailability() {
+  const handlers = getLarkActionHandlers();
+  const results = {};
+  for (const [action, definition] of Object.entries(handlers)) {
+    const probeFn =
+      typeof definition?.probe === "function"
+        ? definition.probe
+        : async () => {
+            await definition.execute({});
+          };
+    results[action] = await probeCapability(probeFn);
+  }
+  return results;
+}
+
+async function runLarkWorkspaceAction(input = {}) {
+  const action = normalizeLarkAction(input?.action);
+  const handlers = getLarkActionHandlers();
+  const handler = handlers[action];
+  return handler.execute(input);
+}
+
+async function getWorkspaceCapabilities() {
+  const availability = await detectLarkActionAvailability();
+  const actions = Object.entries(availability).map(([name, status]) => ({
+    name,
+    enabled: Boolean(status?.enabled),
+    reason: String(status?.reason || ""),
+  }));
+  return {
+    providers: [
+      {
+        provider: "lark",
+        displayName: "Lark/Feishu",
+        actions,
+      },
+    ],
+  };
+}
+
+function normalizeWorkspaceProvider(providerInput) {
+  const provider = String(providerInput || "").trim().toLowerCase();
+  if (!provider) {
+    throw new Error("provider 不能为空");
+  }
+  return provider;
+}
+
+async function runWorkspaceAction({ provider, action, input }) {
+  const normalizedProvider = normalizeWorkspaceProvider(provider);
+  if (normalizedProvider === "lark") {
+    return runLarkWorkspaceAction({
+      ...(input && typeof input === "object" ? input : {}),
+      action,
+    });
+  }
+  throw new Error(`暂不支持 provider: ${normalizedProvider}，请先接入对应 Provider Adapter`);
+}
+
+module.exports = {
+  getClicktagInfo,
+  getWeatherInfo,
+  getAStockHistory,
+  sendLarkMessage,
+  getLarkOAuthAuthorizeUrl,
+  exchangeLarkUserAccessTokenByCode,
+  getLarkOAuthTokenStatus,
+  runLarkWorkspaceAction,
+  runWorkspaceAction,
+  getWorkspaceCapabilities,
+};

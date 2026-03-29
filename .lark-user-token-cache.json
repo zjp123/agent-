@@ -1,0 +1,13 @@
+{
+  "userAccessToken": "u-5u7iQ_Koh3S8CgQCUBV2FCl16NUXg5orPw0GeBw02bFi",
+  "refreshToken": "ur-4vTDCYQt940Hfxhynp1C8Il16pWrg5orow0GexA02fEm",
+  "tokenType": "Bearer",
+  "scope": "",
+  "userId": "b2654aad",
+  "openId": "ou_49f59191c7f63acacbd0af99fbd25c0a",
+  "name": "Rocky Zhang",
+  "tenantKey": "1ad4bb259b19d9bc",
+  "expiresAt": 1774630303967,
+  "refreshExpiresAt": 1777215103967,
+  "updatedAt": "2026-03-27T14:56:44.967Z"
+}

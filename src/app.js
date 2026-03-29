@@ -6,6 +6,11 @@ const Lark = require("@larksuiteoapi/node-sdk");
 const { PassThrough } = require("stream");
 const { McpClient } = require("./agent/mcpClient");
 const { processQuery } = require("./agent/agentService");
+const {
+  getLarkOAuthAuthorizeUrl,
+  exchangeLarkUserAccessTokenByCode,
+  getLarkOAuthTokenStatus,
+} = require("./mcp/mcpAdapter");
 
 const envPath = process.env.ENV_FILE
   ? path.resolve(process.cwd(), process.env.ENV_FILE)
@@ -432,6 +437,63 @@ async function runAgentAndCollectText(question) {
   const raw = chunks.join("");
   return readAgentTextFromSse(raw);
 }
+
+app.get("/api/lark/oauth/url", async (req, res) => {
+  try {
+    const state = String(req.query?.state || `${Date.now()}`).trim();
+    const authorizeUrl = getLarkOAuthAuthorizeUrl({ state });
+    res.json({
+      code: 0,
+      msg: "ok",
+      data: {
+        authorizeUrl,
+        state,
+        status: getLarkOAuthTokenStatus(),
+      },
+    });
+  } catch (error) {
+    res.status(400).json({
+      code: 1,
+      msg: String(error?.message || error || "生成 OAuth 链接失败"),
+    });
+  }
+});
+
+app.get("/api/lark/oauth/callback", async (req, res) => {
+  try {
+    const code = String(req.query?.code || "").trim();
+    if (!code) {
+      res.status(400).json({ code: 1, msg: "缺少 code" });
+      return;
+    }
+    const result = await exchangeLarkUserAccessTokenByCode({ code });
+    res.json({
+      code: 0,
+      msg: "OAuth 授权成功",
+      data: result,
+    });
+  } catch (error) {
+    res.status(400).json({
+      code: 1,
+      msg: String(error?.message || error || "OAuth 回调处理失败"),
+    });
+  }
+});
+
+app.get("/api/lark/oauth/status", async (_req, res) => {
+  try {
+    res.json({
+      code: 0,
+      msg: "ok",
+      data: getLarkOAuthTokenStatus(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      code: 1,
+      msg: String(error?.message || error || "查询 OAuth 状态失败"),
+    });
+  }
+});
 
 
 app.post("/api/aiAgent/ask", async (req, res) => {

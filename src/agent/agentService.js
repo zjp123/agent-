@@ -209,6 +209,9 @@ async function runReActMode({ question, mcpClient, stream, modelConfig }) {
       },
       { role: "user", content: question },
     ],
+    extra_body: {
+        "enable_thinking": True   // 启用思考模式
+    },
     tools,// 告诉agent 工具菜单
     // tool_choice: "required",
   });
