@@ -2,7 +2,9 @@ const fs = require("fs");
 const path = require("path");
 const Lark = require("@larksuiteoapi/node-sdk");
 const LARK_RECEIVER_CACHE_FILE = path.resolve(process.cwd(), ".lark-receiver-cache.json");
-
+/**
+ * @returns {string} - Lark 用户认证缓存文件路径
+ */
 function getLarkUserTokenCacheFile() {
   const customPath = String(process.env.LARK_USER_TOKEN_CACHE_FILE || "").trim();
   if (customPath) {
@@ -234,6 +236,7 @@ function toNum(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
+// 获取股票信息
 async function getAStockHistory({ symbol }) {
   const normalized = normalizeAShareSymbol(symbol);
   const endDate = new Date();
@@ -308,6 +311,10 @@ async function getAStockHistory({ symbol }) {
   };
 }
 
+/**
+ * @param {string} domainInput - Lark 域名输入
+ * @returns {Lark.Domain} - Lark 域名枚举值
+ */
 function normalizeLarkDomain(domainInput) {
   const normalized = String(domainInput || "lark").trim().toLowerCase();
   if (normalized === "feishu") {
@@ -322,6 +329,10 @@ function normalizeLarkDomain(domainInput) {
   return Lark.Domain.Lark;
 }
 
+/**
+ * @param {string} domainInput - Lark 域名输入
+ * @returns {string} - Lark Open API 基础 URL
+ */
 function getLarkOpenApiBaseUrl(domainInput) {
   const normalized = String(domainInput || "lark").trim().toLowerCase();
   if (normalized === "feishu") {
@@ -337,6 +348,10 @@ function getLarkOpenApiBaseUrl(domainInput) {
   return directUrl.replace(/\/+$/, "");
 }
 
+/**
+ * @param {string} appTypeInput - Lark 应用类型输入
+ * @returns {Lark.AppType} - Lark 应用类型枚举值
+ */
 function normalizeLarkAppType(appTypeInput) {
   const normalized = String(appTypeInput || "self_build").trim().toLowerCase();
   if (normalized === "marketplace") {
@@ -345,6 +360,7 @@ function normalizeLarkAppType(appTypeInput) {
   return Lark.AppType.SelfBuild;
 }
 
+// 创建lark client
 function createLarkApiClient() {
   const appId = String(process.env.LARK_APP_ID || "").trim();
   const appSecret = String(process.env.LARK_APP_SECRET || "").trim();
@@ -359,6 +375,9 @@ function createLarkApiClient() {
   });
 }
 
+/**
+ * @returns {Object} - Lark 认证配置对象
+ */
 function createLarkAuthConfig() {
   const appId = String(process.env.LARK_APP_ID || "").trim();
   const appSecret = String(process.env.LARK_APP_SECRET || "").trim();
@@ -372,6 +391,9 @@ function createLarkAuthConfig() {
   };
 }
 
+/**
+ * @returns {Object} - Lark 用户认证配置对象
+ */
 function createLarkUserAuthConfig() {
   const rawToken = String(process.env.LARK_USER_ACCESS_TOKEN || "").trim();
   const userAccessToken = rawToken.replace(/^Bearer\s+/i, "").trim();
@@ -384,6 +406,9 @@ function createLarkUserAuthConfig() {
   };
 }
 
+/**
+ * @returns {Object} - Lark 用户认证缓存对象
+ */
 function readLarkUserTokenCache() {
   try {
     const file = getLarkUserTokenCacheFile();
@@ -414,6 +439,10 @@ function readLarkUserTokenCache() {
   }
 }
 
+/**
+ * @param {Object} data - Lark 用户认证缓存数据
+ * @returns {Object} - Lark 用户认证缓存对象
+ */
 function writeLarkUserTokenCache(data = {}) {
   const file = getLarkUserTokenCacheFile();
   const payload = {
@@ -433,7 +462,7 @@ function writeLarkUserTokenCache(data = {}) {
   return payload;
 }
 
-function getTokenExpireAt(expiresInSeconds) {
+  function getTokenExpireAt(expiresInSeconds) {
   const seconds = Number(expiresInSeconds || 0);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     return 0;
@@ -441,6 +470,11 @@ function getTokenExpireAt(expiresInSeconds) {
   return Date.now() + seconds * 1000;
 }
 
+/**
+ * @param {number} expiresAt - 令牌过期时间戳
+ * @param {number} skewMs - 令牌过期时间偏移量（毫秒）
+ * @returns {boolean} - 是否令牌过期
+ */
 function isTokenExpired(expiresAt, skewMs = 2 * 60 * 1000) {
   const ts = Number(expiresAt || 0);
   if (!Number.isFinite(ts) || ts <= 0) {
@@ -449,6 +483,10 @@ function isTokenExpired(expiresAt, skewMs = 2 * 60 * 1000) {
   return Date.now() + skewMs >= ts;
 }
 
+/**
+ * @param {Object} data - Lark 认证响应数据
+ * @returns {Object} - Lark 用户认证缓存对象 返回的认证数据统一整理成项目内部固定结构
+ */
 function normalizeLarkAuthenPayload(data = {}) {
   return {
     userAccessToken: String(data?.access_token || "").trim(),
@@ -464,6 +502,10 @@ function normalizeLarkAuthenPayload(data = {}) {
   };
 }
 
+/**
+ * @param {string} code - OAuth code
+ * @returns {Object} - Lark 用户认证缓存对象
+ */
 async function exchangeLarkUserAccessTokenByCode({ code }) {
   const authCode = String(code || "").trim();
   if (!authCode) {
@@ -501,6 +543,10 @@ async function exchangeLarkUserAccessTokenByCode({ code }) {
   };
 }
 
+/**
+ * @param {string} refreshToken - Lark 用户刷新令牌
+ * @returns {Object} - Lark 用户认证缓存对象
+ */
 async function refreshLarkUserAccessToken(refreshToken) {
   const normalizedRefreshToken = String(refreshToken || "").trim();
   if (!normalizedRefreshToken) {
@@ -526,6 +572,7 @@ async function refreshLarkUserAccessToken(refreshToken) {
   return normalized;
 }
 
+// 获取最新token
 async function getLarkUserAuthConfig() {
   try {
     const envConfig = createLarkUserAuthConfig();
@@ -568,6 +615,9 @@ async function getLarkUserAuthConfig() {
   };
 }
 
+/**
+ * @returns {string} - Lark 认证主机
+ */
 function getLarkAuthHost() {
   const custom = String(process.env.LARK_OAUTH_AUTHORIZE_BASE || "").trim();
   if (custom) {
@@ -580,6 +630,9 @@ function getLarkAuthHost() {
   return "https://accounts.larksuite.com";
 }
 
+/**
+ * @returns {string} - Lark OAuth 重定向 URI 用户授权完成后，把 code 回调到哪个地址。
+ */
 function getLarkOauthRedirectUri() {
   const configured = String(process.env.LARK_OAUTH_REDIRECT_URI || "").trim();
   if (configured) {
@@ -589,30 +642,112 @@ function getLarkOauthRedirectUri() {
   return `http://localhost:${port}/api/lark/oauth/callback`;
 }
 
-function getLarkOauthScopes() {
-  const configured = String(process.env.LARK_OAUTH_SCOPES || "").trim();
-  const defaults = ["calendar:calendar:readonly", "calendar:calendar", "offline_access"];
-  const source = configured || defaults.join(" ");
-  const scopes = source
-    .split(/[\s,]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-  return [...new Set(scopes)];
+/**
+ * @returns {string[]} - Lark OAuth 作用域
+ */
+function parseLarkScopes(source) {
+  return [...new Set(String(source || "").split(/[\s,]+/).map((item) => item.trim()).filter(Boolean))];
 }
 
-function getLarkOAuthAuthorizeUrl({ state } = {}) {
+function normalizeGrantedOauthScopesFromApplication(scopes = []) {
+  const granted = (Array.isArray(scopes) ? scopes : [])
+    .filter((item) => Number(item?.grant_status || 0) === 1)
+    .map((item) => String(item?.scope_name || "").trim())
+    .filter(Boolean);
+  if (!granted.includes("offline_access")) {
+    granted.push("offline_access");
+  }
+  return [...new Set(granted)];
+}
+
+/**
+ * @returns {string[]} - Lark OAuth 作用域
+ */
+async function getLarkOauthScopes() {
+  const defaults = ["calendar:calendar:readonly", "calendar:calendar", "offline_access"];
+  const configured = parseLarkScopes(process.env.LARK_OAUTH_SCOPES);
+  try {
+    const appId = String(process.env.LARK_APP_ID || "").trim();
+    const client = createLarkApiClient();
+    if (appId && client?.application?.v6?.scope?.list) {
+      const response = await client.application.v6.scope.list({
+        params: {
+          app_id: appId,
+        },
+      });
+      if (Number(response?.code || 0) === 0) {
+        const apiScopes = normalizeGrantedOauthScopesFromApplication(response?.data?.scopes);
+        if (apiScopes.length) {
+          return apiScopes;
+        }
+      }
+    }
+  } catch (_) {}
+  if (configured.length) {
+    return configured;
+  }
+  return defaults;
+}
+
+async function getLarkOAuthAuthorizeUrl({ state } = {}) {
   const { appId } = createLarkAuthConfig();
+  const scopes = await getLarkOauthScopes();
   const query = new URLSearchParams({
     app_id: appId,
     redirect_uri: getLarkOauthRedirectUri(),
     response_type: "code",
-    scope: getLarkOauthScopes().join(" "),
+    scope: scopes.join(" "),
   });
   const normalizedState = String(state || "").trim();
   if (normalizedState) {
     query.set("state", normalizedState);
   }
   return `${getLarkAuthHost()}/open-apis/authen/v1/authorize?${query.toString()}`;
+}
+
+function isLarkReauthRequiredError(errorLike) {
+  const message = String(errorLike?.message || errorLike || "").toLowerCase();
+  if (!message) {
+    return false;
+  }
+  const keywords = [
+    "99991679",
+    "unauthorized",
+    "request user re-authorization",
+    "用户授权",
+    "缺少 lark_user_access_token",
+    "缺少 refresh_token",
+    "user_access_token 已过期",
+    "刷新 user_access_token 失败",
+    "invalid access token",
+    "access token is expired",
+    "permission denied",
+  ];
+  return keywords.some((keyword) => message.includes(keyword));
+}
+
+async function buildLarkReauthHintText() {
+  try {
+    const authorizeUrl = await getLarkOAuthAuthorizeUrl({
+      state: `reauth_${Date.now()}`,
+    });
+    return `检测到当前需要重新授权。请点击授权链接完成授权：${authorizeUrl}`;
+  } catch (_) {
+    return "检测到当前需要重新授权。请访问 /api/lark/oauth/url 获取授权链接并完成授权。";
+  }
+}
+
+async function withLarkReauthHint(task) {
+  try {
+    return await task();
+  } catch (error) {
+    if (!isLarkReauthRequiredError(error)) {
+      throw error;
+    }
+    const baseMessage = String(error?.message || error || "Lark 调用失败");
+    const hint = await buildLarkReauthHintText();
+    throw new Error(`${baseMessage}\n${hint}`);
+  }
 }
 
 function getLarkOAuthTokenStatus() {
@@ -764,12 +899,45 @@ function toLarkTimestampSeconds(value, fallback) {
   return String(Math.floor(millis / 1000));
 }
 
+function pad2(value) {
+  return String(value).padStart(2, "0");
+}
+
+function getDatePartsAtUtcOffset(date, offsetHours) {
+  const offsetMs = Number(offsetHours) * 60 * 60 * 1000;
+  const shifted = new Date(date.getTime() + offsetMs);
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    second: shifted.getUTCSeconds(),
+  };
+}
+
+function formatIsoAtUtcOffset(isoValue, offsetHours) {
+  const parsed = new Date(isoValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(isoValue || "").trim();
+  }
+  const parts = getDatePartsAtUtcOffset(parsed, offsetHours);
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)} ${pad2(parts.hour)}:${pad2(parts.minute)}`;
+}
+
+function getYyyyMmDdAtUtcOffset(date, offsetHours) {
+  const parts = getDatePartsAtUtcOffset(date, offsetHours);
+  return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+
 function getTodayRangeIso() {
+  const beijingOffsetHours = 8;
   const now = new Date();
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(now);
-  end.setHours(23, 59, 59, 999);
+  const todayParts = getDatePartsAtUtcOffset(now, beijingOffsetHours);
+  const startUtcMs = Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day, 0, 0, 0, 0) - beijingOffsetHours * 60 * 60 * 1000;
+  const endUtcMs = Date.UTC(todayParts.year, todayParts.month - 1, todayParts.day, 23, 59, 59, 999) - beijingOffsetHours * 60 * 60 * 1000;
+  const start = new Date(startUtcMs);
+  const end = new Date(endUtcMs);
   return {
     startIso: start.toISOString(),
     endIso: end.toISOString(),
@@ -825,6 +993,19 @@ function normalizeMeeting(event) {
   const startTime = formatLarkTime(event?.start_time);
   const endTime = formatLarkTime(event?.end_time);
   const summary = String(event?.summary || "").trim() || "(无主题)";
+  const meetingLinkCandidates = [
+    event?.meeting_url,
+    event?.join_url,
+    event?.online_meeting_url,
+    event?.vchat?.meeting_url,
+    event?.vchat?.join_url,
+    event?.vchat?.meeting_link,
+    event?.video_conference?.url,
+    event?.conference?.url,
+  ];
+  const meetingLink = meetingLinkCandidates
+    .map((item) => String(item || "").trim())
+    .find((item) => /^https?:\/\//i.test(item));
   return {
     eventId: String(event?.event_id || "").trim(),
     summary,
@@ -832,6 +1013,10 @@ function normalizeMeeting(event) {
     isAllDay: Boolean(event?.is_all_day),
     startTime,
     endTime,
+    startTimeLocal: formatIsoAtUtcOffset(startTime, 8),
+    endTimeLocal: formatIsoAtUtcOffset(endTime, 8),
+    timezone: "Asia/Shanghai",
+    meetingLink: meetingLink || "",
     description: String(event?.description || "").trim(),
     organizer: {
       id: String(event?.organizer?.id || "").trim(),
@@ -867,6 +1052,58 @@ async function listLarkChatsByOpenApi({ pageSize = 50, pageToken = "" } = {}) {
       chatType: String(item?.chat_type || "").trim(),
     })),
   };
+}
+
+function isLikelyLarkChatId(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return false;
+  }
+  return /^oc_[a-z0-9]+$/i.test(normalized) || /^chat_[a-z0-9]+$/i.test(normalized);
+}
+
+async function findLarkChatByName(chatName, maxPages = 5) {
+  const target = String(chatName || "").trim();
+  if (!target) {
+    return null;
+  }
+  let nextToken = "";
+  for (let index = 0; index < maxPages; index += 1) {
+    const page = await listLarkChatsByOpenApi({
+      pageSize: 100,
+      pageToken: nextToken,
+    });
+    const chats = Array.isArray(page?.chats) ? page.chats : [];
+    const exactMatch = chats.find((item) => String(item?.name || "").trim() === target);
+    if (exactMatch?.chatId) {
+      return exactMatch;
+    }
+    const fuzzyMatch = chats.find((item) => String(item?.name || "").trim().includes(target));
+    if (fuzzyMatch?.chatId) {
+      return fuzzyMatch;
+    }
+    if (!page?.hasMore) {
+      break;
+    }
+    nextToken = String(page?.pageToken || "").trim();
+    if (!nextToken) {
+      break;
+    }
+  }
+  return null;
+}
+
+function isLikelyInvalidReceiveIdError(errorLike) {
+  const message = String(errorLike?.message || errorLike || "").toLowerCase();
+  if (!message) {
+    return false;
+  }
+  return (
+    message.includes("invalid receive_id") ||
+    message.includes("illegal receive_id") ||
+    message.includes("chat_id not found") ||
+    message.includes("400")
+  );
 }
 
 async function listLarkCalendars({ pageSize = 50, pageToken = "" } = {}) {
@@ -1049,7 +1286,8 @@ async function summarizeTodayMeetings({ calendarId }) {
   );
   return {
     calendarId: targetCalendarId,
-    date: new Date().toISOString().slice(0, 10),
+    date: getYyyyMmDdAtUtcOffset(new Date(), 8),
+    timezone: "Asia/Shanghai",
     count: meetings.length,
     scannedCalendarCount: validCalendars.length,
     meetings,
@@ -1154,33 +1392,92 @@ async function createLarkCalendarEvent({
 }
 
 async function sendByAppApi({ messageText, chatId }) {
-  const targetChatId = String(chatId || "").trim();
-  if (!targetChatId) {
+  const inputChat = String(chatId || "").trim();
+  if (!inputChat) {
     throw new Error("缺少 chat_id，请传入 chatId");
+  }
+  let targetChatId = inputChat;
+  let resolvedByName = false;
+  if (!isLikelyLarkChatId(targetChatId)) {
+    const matchedChat = await findLarkChatByName(targetChatId);
+    if (matchedChat?.chatId) {
+      targetChatId = matchedChat.chatId;
+      resolvedByName = true;
+    }
   }
   const client = createLarkApiClient();
   if (!client) {
     throw new Error("缺少 LARK_APP_ID 或 LARK_APP_SECRET");
   }
 
-  const response = await client.im.message.create({
-    params: {
-      receive_id_type: "chat_id",
-    },
-    data: {
-      receive_id: targetChatId,
-      msg_type: "text",
-      content: JSON.stringify({ text: messageText }),
-    },
-  });
+  let response = null;
+  try {
+    response = await client.im.message.create({
+      params: {
+        receive_id_type: "chat_id",
+      },
+      data: {
+        receive_id: targetChatId,
+        msg_type: "text",
+        content: JSON.stringify({ text: messageText }),
+      },
+    });
+  } catch (error) {
+    if (!resolvedByName && isLikelyInvalidReceiveIdError(error) && !isLikelyLarkChatId(inputChat)) {
+      const fallbackChat = await findLarkChatByName(inputChat);
+      if (fallbackChat?.chatId) {
+        targetChatId = fallbackChat.chatId;
+        resolvedByName = true;
+        response = await client.im.message.create({
+          params: {
+            receive_id_type: "chat_id",
+          },
+          data: {
+            receive_id: targetChatId,
+            msg_type: "text",
+            content: JSON.stringify({ text: messageText }),
+          },
+        });
+      } else {
+        throw error;
+      }
+    } else {
+      throw error;
+    }
+  }
 
   if (Number(response?.code || 0) !== 0) {
+    if (!resolvedByName && !isLikelyLarkChatId(inputChat) && isLikelyInvalidReceiveIdError(response?.msg)) {
+      const fallbackChat = await findLarkChatByName(inputChat);
+      if (fallbackChat?.chatId) {
+        const retryResponse = await client.im.message.create({
+          params: {
+            receive_id_type: "chat_id",
+          },
+          data: {
+            receive_id: fallbackChat.chatId,
+            msg_type: "text",
+            content: JSON.stringify({ text: messageText }),
+          },
+        });
+        if (Number(retryResponse?.code || 0) === 0) {
+          return {
+            channel: "app_api",
+            chatId: fallbackChat.chatId,
+            resolvedFrom: inputChat,
+            messageLength: messageText.length,
+            platformResponse: retryResponse,
+          };
+        }
+      }
+    }
     throw new Error(`飞书消息发送失败: ${response?.msg || "unknown error"}`);
   }
 
   return {
     channel: "app_api",
     chatId: targetChatId,
+    resolvedFrom: resolvedByName ? inputChat : "",
     messageLength: messageText.length,
     platformResponse: response,
   };
@@ -1386,7 +1683,9 @@ function getLarkActionHandlers() {
 
 async function probeCapability(fn) {
   try {
-    await fn();
+    await withLarkReauthHint(async () => {
+      await fn();
+    });
     return { enabled: true, reason: "" };
   } catch (error) {
     return {
@@ -1415,7 +1714,7 @@ async function runLarkWorkspaceAction(input = {}) {
   const action = normalizeLarkAction(input?.action);
   const handlers = getLarkActionHandlers();
   const handler = handlers[action];
-  return handler.execute(input);
+  return withLarkReauthHint(async () => handler.execute(input));
 }
 
 async function getWorkspaceCapabilities() {

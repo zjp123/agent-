@@ -103,7 +103,10 @@ function createReActSystemPrompt(toolNames) {
     "当信息不足时，优先调用工具；当信息足够时，直接给出最终回答。",
     "当用户要求“发给飞书/Lark”时，优先理解完整意图与上下文，先完成内容生成，再调用 send_lark_message 发送。",
     "涉及 send_lark_message 时，不要主动索要 chat_id 或 receiveId，先直接调用工具；仅当工具明确报错缺少接收方时再提示用户。",
+    "如果用户提供的是群名称（例如“哈哈哈”），先调用 lark_workspace_action(action=list_chats) 找到匹配 chatId，再调用 send_lark_message 或 lark_workspace_action(action=send_message) 发送。",
     "如果用户要求“先A再发给飞书”，请先完成 A，再把最终内容通过 send_lark_message 发送。",
+    "处理飞书会议时间时，默认按 Asia/Shanghai（北京时间）展示；除非用户明确要求 UTC，否则不要将北京时间误写成 UTC。",
+    "当会议数据里存在 meetingLink 字段时，汇总结果要一并展示会议链接。",
     "禁止编造不存在的工具；如果用户目标超出可用工具能力，请明确说明能力边界并给出下一步建议。",
   ].join("");
 }
@@ -210,7 +213,7 @@ async function runReActMode({ question, mcpClient, stream, modelConfig }) {
       { role: "user", content: question },
     ],
     extra_body: {
-        "enable_thinking": True   // 启用思考模式
+      enable_thinking: true
     },
     tools,// 告诉agent 工具菜单
     // tool_choice: "required",

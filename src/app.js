@@ -441,7 +441,7 @@ async function runAgentAndCollectText(question) {
 app.get("/api/lark/oauth/url", async (req, res) => {
   try {
     const state = String(req.query?.state || `${Date.now()}`).trim();
-    const authorizeUrl = getLarkOAuthAuthorizeUrl({ state });
+    const authorizeUrl = await getLarkOAuthAuthorizeUrl({ state });
     res.json({
       code: 0,
       msg: "ok",

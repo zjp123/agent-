@@ -58,6 +58,28 @@
         padding: 12px;
         min-height: 180px;
       }
+      #authAction {
+        display: none;
+        margin-top: 12px;
+        gap: 8px;
+        align-items: center;
+      }
+      #authAction.active {
+        display: flex;
+      }
+      #authBtn {
+        background: #1a7f37;
+        color: #fff;
+      }
+      #authLink {
+        color: #0969da;
+        text-decoration: none;
+        font-size: 13px;
+        max-width: 520px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       #loading {
         display: none;
         align-items: center;
@@ -97,6 +119,10 @@
         </div>
         <div id="loading">正在生成回答...</div>
         <div id="output"></div>
+        <div id="authAction">
+          <button id="authBtn">去授权</button>
+          <a id="authLink" target="_blank" rel="noopener noreferrer"></a>
+        </div>
       </div>
     </div>
     <script type="module" src="/main.js"></script>

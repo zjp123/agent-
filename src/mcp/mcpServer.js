@@ -247,7 +247,7 @@ mcpServer.tool(
   "通过飞书/Lark 应用消息 API 发送文本消息",
   {
     text: larkInputShape.text.describe("要发送的消息文本"),
-    chatId: larkInputShape.chatId.describe("可选，飞书会话 chat_id"),
+    chatId: larkInputShape.chatId.describe("可选，飞书会话 chat_id；也可传群显示名称（会自动解析）"),
     receiveIdType: larkInputShape.receiveIdType.describe("可选，接收者ID类型: chat_id/open_id/user_id/email/union_id"),
     receiveId: larkInputShape.receiveId.describe("可选，接收者ID值"),
   },
@@ -290,7 +290,7 @@ mcpServer.tool(
     description: larkWorkspaceShape.description.describe("create_calendar_event 可选，会议描述"),
     visibility: larkWorkspaceShape.visibility.describe("create_calendar_event 可选，可见性，如 public"),
     preferPrimary: larkWorkspaceShape.preferPrimary.describe("create_calendar_event 可选，是否优先创建到主日历，默认 true"),
-    chatId: larkWorkspaceShape.chatId.describe("send_message 可选，飞书会话 chat_id"),
+    chatId: larkWorkspaceShape.chatId.describe("send_message 可选，飞书会话 chat_id；也可传群显示名称（会自动解析）"),
     receiveIdType: larkWorkspaceShape.receiveIdType.describe("send_message 可选，接收者ID类型"),
     receiveId: larkWorkspaceShape.receiveId.describe("send_message 可选，接收者ID值"),
     calendarId: larkWorkspaceShape.calendarId.describe("会议相关动作可选，日历ID"),

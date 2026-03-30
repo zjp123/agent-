@@ -24,8 +24,38 @@ const output = document.querySelector("#output");
 const loadingEl = document.querySelector("#loading");
 const sendBtn = document.querySelector("#sendBtn");
 const stopBtn = document.querySelector("#stopBtn");
+const authActionEl = document.querySelector("#authAction");
+const authBtn = document.querySelector("#authBtn");
+const authLink = document.querySelector("#authLink");
 
 let controller = null;
+let currentAuthorizeUrl = "";
+
+function extractAuthorizeUrl(text) {
+  const input = String(text || "");
+  const matches = input.match(/https?:\/\/[^\s)>\]]+/gi) || [];
+  const exact = matches.find((url) =>
+    /\/open-apis\/authen\/v1\/authorize\?/i.test(url)
+  );
+  if (exact) {
+    return exact;
+  }
+  return matches[0] || "";
+}
+
+function renderAuthorizeActionByText(text) {
+  const authorizeUrl = extractAuthorizeUrl(text);
+  currentAuthorizeUrl = authorizeUrl;
+  if (!authorizeUrl) {
+    authActionEl.classList.remove("active");
+    authLink.textContent = "";
+    authLink.removeAttribute("href");
+    return;
+  }
+  authActionEl.classList.add("active");
+  authLink.href = authorizeUrl;
+  authLink.textContent = authorizeUrl;
+}
 
 function setLoading(isLoading) {
   sendBtn.disabled = isLoading;
@@ -41,11 +71,13 @@ sendBtn.addEventListener("click", async () => {
   const question = questionInput.value.trim();
   if (!question) {
     output.textContent = "请输入问题后再发送。";
+    renderAuthorizeActionByText(output.textContent);
     return;
   }
 
   controller = new AbortController();
   output.textContent = "";
+  renderAuthorizeActionByText("");
   setLoading(true);
 
   try {
@@ -60,12 +92,15 @@ sendBtn.addEventListener("click", async () => {
       onmessage(event) {
         if (event.data === "[DONE]") {
           setLoading(false);
+          renderAuthorizeActionByText(output.textContent);
           return;
         }
         output.textContent += decodeURIComponent(event.data);
+        renderAuthorizeActionByText(output.textContent);
       },
       onclose() {
         setLoading(false);
+        renderAuthorizeActionByText(output.textContent);
       },
       onerror() {
         setLoading(false);
@@ -74,6 +109,7 @@ sendBtn.addEventListener("click", async () => {
     });
   } catch (error) {
     output.textContent += `\n\n[错误] ${error.message || "未知异常"}`;
+    renderAuthorizeActionByText(output.textContent);
     setLoading(false);
   }
 });
@@ -84,6 +120,13 @@ stopBtn.addEventListener("click", () => {
     controller = null;
   }
   setLoading(false);
+});
+
+authBtn.addEventListener("click", () => {
+  if (!currentAuthorizeUrl) {
+    return;
+  }
+  window.open(currentAuthorizeUrl, "_blank", "noopener,noreferrer");
 });
 
 setLoading(false);
