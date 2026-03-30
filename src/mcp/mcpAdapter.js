@@ -1062,6 +1062,19 @@ function isLikelyLarkChatId(value) {
   return /^oc_[a-z0-9]+$/i.test(normalized) || /^chat_[a-z0-9]+$/i.test(normalized);
 }
 
+function normalizeLarkMessageText(textInput) {
+  const text = String(textInput || "").trim();
+  if (!text) {
+    return "";
+  }
+  if (/<at\s+user_id=(["'])all\1>[\s\S]*?<\/at>/i.test(text)) {
+    return text;
+  }
+  return text.replace(/(^|\s)(@所有人|@_all)(?=\s|$)/g, (matched, prefix) => {
+    return `${prefix}<at user_id="all">所有人</at>`;
+  });
+}
+
 async function findLarkChatByName(chatName, maxPages = 5) {
   const target = String(chatName || "").trim();
   if (!target) {
@@ -1549,7 +1562,7 @@ async function sendByAppApiWithReceiveId({ messageText, receiveIdType, receiveId
 }
 
 async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
-  const messageText = String(text || "").trim();
+  const messageText = normalizeLarkMessageText(text);
   if (!messageText) {
     throw new Error("text 不能为空");
   }
@@ -1759,6 +1772,7 @@ module.exports = {
   getWeatherInfo,
   getAStockHistory,
   sendLarkMessage,
+  normalizeLarkMessageText,
   getLarkOAuthAuthorizeUrl,
   exchangeLarkUserAccessTokenByCode,
   getLarkOAuthTokenStatus,
