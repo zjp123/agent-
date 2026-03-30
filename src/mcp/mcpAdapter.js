@@ -1492,6 +1492,20 @@ function normalizeReceiveIdType(receiveIdTypeInput) {
   return type;
 }
 
+function normalizeLarkMentions(textInput) {
+  const text = String(textInput || "");
+  if (!text.trim()) {
+    return "";
+  }
+  if (/<at\s+user_id\s*=\s*"all"\s*>/i.test(text)) {
+    return text;
+  }
+  return text.replace(
+    /(^|[\s(（\[【'"“‘,，.。!！?？:：;；])[@＠](?:所有人|all)(?=($|[\s,，.。!！?？:：;；)\]】'"”’]))/gi,
+    (_, prefix) => `${prefix}<at user_id="all">所有人</at>`
+  );
+}
+
 function readLarkReceiverCache() {
   try {
     if (!fs.existsSync(LARK_RECEIVER_CACHE_FILE)) {
@@ -1553,17 +1567,18 @@ async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
   if (!messageText) {
     throw new Error("text 不能为空");
   }
+  const normalizedMessageText = normalizeLarkMentions(messageText);
 
   if (String(chatId || "").trim()) {
     return sendByAppApi({
-      messageText,
+      messageText: normalizedMessageText,
       chatId,
     });
   }
 
   if (String(receiveId || "").trim() && String(receiveIdType || "").trim()) {
     return sendByAppApiWithReceiveId({
-      messageText,
+      messageText: normalizedMessageText,
       receiveIdType,
       receiveId,
     });
@@ -1573,7 +1588,7 @@ async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
   const oauthOpenId = String(oauthTokenCache?.openId || "").trim();
   if (oauthOpenId) {
     return sendByAppApiWithReceiveId({
-      messageText,
+      messageText: normalizedMessageText,
       receiveIdType: "open_id",
       receiveId: oauthOpenId,
     });
@@ -1584,7 +1599,7 @@ async function sendLarkMessage({ text, chatId, receiveIdType, receiveId }) {
   const cachedReceiver = readLarkReceiverCache();
   if (allowCachedGroupFallback && cachedReceiver) {
     return sendByAppApiWithReceiveId({
-      messageText,
+      messageText: normalizedMessageText,
       receiveIdType: cachedReceiver.receiveIdType,
       receiveId: cachedReceiver.receiveId,
     });
