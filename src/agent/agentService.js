@@ -1,4 +1,5 @@
 const OpenAI = require("openai");
+const { runReActStateMachine } = require("./reactStateMachine");
 
 const DEFAULT_THINKING_MODE = "react";
 const SUPPORTED_THINKING_MODES = new Set(["react", "local"]);
@@ -58,26 +59,6 @@ function normalizeThinkingMode(thinkingMode) {
     return mode;
   }
   return DEFAULT_THINKING_MODE;
-}
-
-function readOutputText(response) {
-  if (typeof response?.output_text === "string" && response.output_text.trim()) {
-    return response.output_text;
-  }
-  const blocks = [];
-  const outputItems = Array.isArray(response?.output) ? response.output : [];
-  for (const item of outputItems) {
-    if (item?.type !== "message") {
-      continue;
-    }
-    const contentList = Array.isArray(item?.content) ? item.content : [];
-    for (const contentItem of contentList) {
-      if (typeof contentItem?.text === "string") {
-        blocks.push(contentItem.text);
-      }
-    }
-  }
-  return blocks.join("\n").trim();
 }
 
 function mapMcpToolsToOpenAiTools(mcpClient) {
@@ -202,73 +183,15 @@ async function runReActMode({ question, mcpClient, stream, modelConfig }) {
   const allowedToolNames = new Set(tools.map((tool) => tool.name));
   const systemPrompt = createReActSystemPrompt([...allowedToolNames]);
 
-  let response = await client.responses.create({
+  const finalAnswer = await runReActStateMachine({
+    llmClient: client,
     model: modelConfig.model,
-    // 预设系统角色，提示模型调用工具的行为
-    input: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      { role: "user", content: question },
-    ],
-    extra_body: {
-      enable_thinking: true
-    },
-    tools,// 告诉agent 工具菜单
-    // tool_choice: "required",
+    systemPrompt,
+    question,
+    tools,
+    mcpClient,
+    maxSteps: 6,
   });
-
-    // maxSteps = min(10, 2 + 预期链路深度 + 重试预算)
-  for (let step = 0; step < 6; step += 1) {
-    const outputItems = Array.isArray(response?.output) ? response.output : [];
-    const functionCalls = outputItems.filter((item) => item?.type === "function_call");
-
-    if (!functionCalls.length) {
-      break;
-    }
-    const toolOutputs = [];
-    for (const call of functionCalls) {
-      const callId = call?.call_id || call?.id;
-      if (!callId) {
-        continue;
-      }
-      const callName = call?.name || "";
-      const rawArgs = typeof call?.arguments === "string" ? call.arguments : "{}";
-      const parsedArgs = safeJsonParse(rawArgs);
-      const args = parsedArgs && typeof parsedArgs === "object" ? parsedArgs : {};
-
-      if (!allowedToolNames.has(callName)) {
-        toolOutputs.push({
-          type: "function_call_output",
-          call_id: callId,
-          output: JSON.stringify({ error: `不支持的工具: ${callName}` }),
-        });
-        continue;
-      }
-
-      const toolResult = await mcpClient.callTool(callName, args);
-      toolOutputs.push({
-        type: "function_call_output",
-        call_id: callId,
-        output: JSON.stringify(toolResult),
-      });
-    }
-
-    if (!toolOutputs.length) {
-      break;
-    }
-
-    response = await client.responses.create({
-      model: modelConfig.model,
-      // 这次请求是对上一次响应的延续 ，不是一条全新的独立请求。 防止上下文断开
-      previous_response_id: response.id,
-      input: toolOutputs,
-      tools,
-    });
-  }
-
-  const finalAnswer = readOutputText(response) || "未生成回答。";
   await writeStreamByChunks(stream, finalAnswer);
 }
 
