@@ -383,4 +383,21 @@ mcpServer.tool(
   }
 );
 
+/** 
+ * 
+ * 除了 content ，还常见这些顶层字段（按你现在用的 SDK 类型定义）：
+- structuredContent （可选）：结构化对象数据
+- isError （可选）：标记这次 tool 调用是否为错误结果
+- _meta （可选）：元信息（例如 progress token、关联任务信息）你可以在这里看到定义：types.d.ts:CallToolResultSchema
+另外， content 本身不是只能 text，它的块类型还支持：
+- text
+- image
+- audio
+- resource_link
+- resource
+contetn 是强约束
+
+MCP 规定“外壳”（content 块结构），你自定义“内核”（text 里的业务 JSON）。
+*/
+
 module.exports = { mcpServer };

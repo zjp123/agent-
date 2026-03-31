@@ -220,6 +220,8 @@ async function runReActMode({ question, mcpClient, stream, modelConfig }) {
   });
 
     // maxSteps = min(10, 2 + 预期链路深度 + 重试预算)
+  // 执行工具调用, - 没有它，模型只会停在“我建议调用 get_weather_info(...)” 拿不到真实工具结果
+  // 并防止无限调用
   for (let step = 0; step < 6; step += 1) {
     const outputItems = Array.isArray(response?.output) ? response.output : [];
     const functionCalls = outputItems.filter((item) => item?.type === "function_call");

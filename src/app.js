@@ -506,7 +506,9 @@ app.post("/api/aiAgent/ask", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
 
   // PassThrough 用于把服务层写入的数据直接透传给前端
+  // 创建一个透传流（写进去什么，就按顺序读出来什么）
   const stream = new PassThrough();
+  // 流直接连接到 res
   stream.pipe(res);
   const streamChunks = [];
   stream.on("data", (chunk) => {
@@ -535,6 +537,7 @@ app.post("/api/aiAgent/ask", async (req, res) => {
       return;
     }
 
+    // 调用大模型 回复问题
     await processQuery({
       question,
       mcpClient,
@@ -611,10 +614,13 @@ app.post("/api/lark/events", async (req, res) => {
 });
 
 async function bootstrap() {
+  // 链接mcp服务端
   await mcpClient.connectToServer();
+  // 创建飞书/Lark 客户端
   larkApiClient = createLarkClient();
+  // 拉取群列表 记录群id
   await syncLarkReceiverCacheOnStartup();
-  // 开启长连接
+  // 开启长连接 im.message.receive_v1 注册与消息处理
   startLarkLongConnection();
   app.listen(PORT, () => {
     console.log(`Server is running at http://localhost:${PORT}`);
