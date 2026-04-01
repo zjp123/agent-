@@ -182,6 +182,7 @@ mcpServer.tool(
   }
 );
 
+// name, description, paramsSchema, handler
 mcpServer.tool(
   "get_weather_info",
   "按城市查询天气信息",

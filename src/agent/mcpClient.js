@@ -95,6 +95,7 @@ class McpClient {
   }
 
   // 调用mcp服务端的工具---callTool 来源于StdioServerTransport
+  // jsonrpc
   async callTool(name, args) {
     return this.mcp.callTool({
       name,
